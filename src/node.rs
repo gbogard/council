@@ -9,7 +9,8 @@ pub mod id {
     use super::HASHER_SEED;
 
     /// A [NodeId] is a 64-bit number uniquely identifying a single node in a cluster
-    #[derive(Copy, Clone, PartialEq, PartialOrd, Debug)]
+    #[repr(transparent)]
+    #[derive(Copy, Clone, PartialEq, PartialOrd, Eq, Ord, Debug, Hash)]
     pub struct NodeId(u64);
 
     impl NodeId {
@@ -26,7 +27,9 @@ pub mod id {
     }
 }
 
-pub enum NodeState {
+#[repr(u8)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum NodeStatus {
     // A node attempts to join the cluster
     Joining,
     // Upon convergence, a joining node was marked up by the cluster leader
