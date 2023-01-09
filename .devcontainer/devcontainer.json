@@ -1,0 +1,32 @@
+{
+    "build": { "dockerfile": "../dev-env.Dockerfile" },
+    "mounts": [
+      "type=bind,source=~/.cargo/credentials,target=~/.cargo/credentials"
+    ],
+    "settings": {
+      "terminal.integrated.defaultProfile.linux": "zsh", 
+      "terminal.integrated.profiles.linux": {
+          "zsh": {
+              "path": "/bin/zsh"
+          }
+      },
+      "editor.formatOnSave": true,
+      "rust-analyzer.rustfmt.extraArgs": ["+nightly"]
+    },
+    "customizations": {
+        // Configure properties specific to VS Code.
+        "vscode": {
+          // Add the IDs of extensions you want installed when the container is created.
+          "extensions": [
+            "rust-lang.rust-analyzer",
+            "esbenp.prettier-vscode",
+            "pbkit.vscode-pbkit",
+            "bungcip.better-toml",
+            "mtxr.sqltools-driver-sqlite",
+            "mtxr.sqltools",
+            "skellock.just",
+            "vadimcn.vscode-lldb"
+          ]
+        }
+      }
+}

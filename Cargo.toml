@@ -1,0 +1,22 @@
+[package]
+name = "council"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "A library to build distributed applications, inspired by Akka Cluster"
+keywords = ["cluster", "distributed-systems"]
+categories = ["network-programming"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = "1.24.1"
+tracing = "0.1.37"
+rkyv = "0.7.39"
+thiserror = "1.0.38"
+url = "2.3.1"
+twox-hash = "1.6.3"
+
+[dev-dependencies]
+quickcheck = "1"
+quickcheck_macros = "1"
