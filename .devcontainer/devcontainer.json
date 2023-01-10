@@ -1,7 +1,7 @@
 {
     "build": { "dockerfile": "../dev-env.Dockerfile" },
     "mounts": [
-      "type=bind,source=~/.cargo/credentials,target=~/.cargo/credentials"
+      "type=bind,source=${localEnv:HOME}/.cargo/credentials,target=/home/devcontainer-user/.cargo/credentials"
     ],
     "settings": {
       "terminal.integrated.defaultProfile.linux": "zsh", 
