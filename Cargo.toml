@@ -16,7 +16,9 @@ rkyv = "0.7.39"
 thiserror = "1.0.38"
 url = "2.3.1"
 twox-hash = "1.6.3"
+time = "0.3.17"
 
 [dev-dependencies]
 quickcheck = "1"
 quickcheck_macros = "1"
+time = {version = "0.3.17", features= ["quickcheck"]}

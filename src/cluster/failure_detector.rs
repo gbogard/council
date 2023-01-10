@@ -1,11 +1,11 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, LinkedList},
     time::{Duration, Instant},
 };
 
 use crate::node::id::NodeId;
 
-const HEARTBEAT_INTERVALS_WINDOW_SIZE: u8 = 255;
+const HEARTBEAT_INTERVALS_WINDOW_SIZE: u32 = 255;
 
 /// The [FailureDetector] estimates the probability of a node being unreachable.
 ///
@@ -39,7 +39,7 @@ impl FailureDetector {
                     (last_heartbeat - member.last_heartbeat) as u32;
                 let mean_heartbeat_time = elapsed_time / received_heartbeats_since_last_record;
                 for _ in 0..received_heartbeats_since_last_record {
-                    member.heartbeats_intervals.push(mean_heartbeat_time);
+                    member.insert_interval(mean_heartbeat_time);
                 }
                 member.refresh_stats();
             }
@@ -47,7 +47,7 @@ impl FailureDetector {
                 let member = FailureDetectorMember {
                     last_heartbeat,
                     last_heartbeat_received_at,
-                    heartbeats_intervals: Vec::new(),
+                    heartbeats_intervals: LinkedList::new(),
                     hearbeats_interval_std_dev: None,
                     heartbeats_intervals_mean: None,
                 };
@@ -61,7 +61,7 @@ impl FailureDetector {
 struct FailureDetectorMember {
     last_heartbeat: u64,
     last_heartbeat_received_at: Instant,
-    heartbeats_intervals: Vec<Duration>,
+    heartbeats_intervals: LinkedList<Duration>,
     heartbeats_intervals_mean: Option<Duration>,
     hearbeats_interval_std_dev: Option<Duration>,
 }
@@ -102,10 +102,17 @@ impl FailureDetectorMember {
                 let mean = mean.as_secs_f64();
                 let std_dev = std_dev.as_secs_f64();
                 let cdf_at_x = 0.5 * (mean - x) / (std_dev * std::f64::consts::SQRT_2);
-                let phi = 1 - cdf_at_x.log10();
+                let phi = 1.0 - cdf_at_x.log10();
                 Some(phi)
             }
             _ => None,
         }
+    }
+
+    fn insert_interval(&mut self, interval: Duration) {
+        if self.heartbeats_intervals.len() == HEARTBEAT_INTERVALS_WINDOW_SIZE as usize {
+            self.heartbeats_intervals.pop_front();
+        }
+        self.heartbeats_intervals.push_back(interval);
     }
 }

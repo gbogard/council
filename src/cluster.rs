@@ -5,6 +5,9 @@ use self::{failure_detector::FailureDetector, views::ClusterView};
 pub mod failure_detector;
 pub mod views;
 
+#[cfg(test)]
+mod views_tests;
+
 pub struct Cluster {
     state: watch::Sender<State>,
 }
