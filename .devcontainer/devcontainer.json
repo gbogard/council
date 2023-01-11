@@ -11,7 +11,8 @@
           }
       },
       "editor.formatOnSave": true,
-      "rust-analyzer.rustfmt.extraArgs": ["+nightly"]
+      "rust-analyzer.rustfmt.extraArgs": ["+nightly"],
+      "rust-analyzer.cargo.features": "all"
     },
     "customizations": {
         // Configure properties specific to VS Code.

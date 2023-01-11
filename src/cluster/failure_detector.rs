@@ -17,6 +17,7 @@ const HEARTBEAT_INTERVALS_WINDOW_SIZE: u32 = 255;
 /// To quote Akka's documentation:
 /// > The suspicion level of failure is represented by a value called phi.
 /// > The basic idea of the phi failure detector is to express the value of phi on a scale that is dynamically adjusted to reflect current network conditions.
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FailureDetector {
     members: HashMap<NodeId, FailureDetectorMember>,
     pub phi_treshold: f64,
@@ -58,8 +59,10 @@ impl FailureDetector {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 struct FailureDetectorMember {
     last_heartbeat: u64,
+    #[cfg_attr(feature = "serde", serde(skip))]
     last_heartbeat_received_at: Instant,
     heartbeats_intervals: LinkedList<Duration>,
     heartbeats_intervals_mean: Option<Duration>,

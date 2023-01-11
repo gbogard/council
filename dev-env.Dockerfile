@@ -41,9 +41,4 @@ RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master
 
 RUN rustup component add clippy
 RUN rustup toolchain install nightly --component rustfmt  
-
-RUN cargo install mdbook
-RUN cargo install mdbook-mermaid
-RUN cargo install mdbook-admonish
-RUN cargo install just
 RUN cargo install cargo-deny
