@@ -11,6 +11,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_17.x | bash -
 RUN apt update
 RUN apt install -y \
     git \
+    protobuf-compiler libprotobuf-dev \
     zsh
 
 # Install the GDB Debugger

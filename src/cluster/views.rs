@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hasher, iter::once, str::FromStr};
+use std::collections::HashMap;
 
 #[cfg(test)]
 use quickcheck::Arbitrary;
@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use url::Url;
 
+use super::version_vector::{self, VersionVector};
 use crate::node::{id::NodeId, NodeStatus};
 
 /// A view of how the running node views the cluster, that is how it views itself and its peers.
@@ -14,21 +15,30 @@ use crate::node::{id::NodeId, NodeStatus};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ClusterView {
     pub members: HashMap<NodeId, MemberView>,
+    pub version_vector: VersionVector,
 }
 
 impl ClusterView {
     pub(crate) fn initial(this_node_advertised_url: Url, peer_members: &[Url]) -> Self {
         let mut members = HashMap::new();
+        let mut version_vector = VersionVector::default();
 
         for url in peer_members {
             let member = MemberView::peer_node_initial_view(&url);
+            version_vector.versions.insert(member.id, member.version());
             members.insert(member.id, member);
         }
 
         let this_node = MemberView::this_node_initial_view(this_node_advertised_url);
+        version_vector
+            .versions
+            .insert(this_node.id, this_node.version());
         members.insert(this_node.id, this_node);
 
-        Self { members }
+        Self {
+            members,
+            version_vector,
+        }
     }
 
     /// Merges a received view from another node into this view.
@@ -37,7 +47,13 @@ impl ClusterView {
         for (_, other_node) in other_view.members {
             if let Some(existing_member_view) = self.members.get_mut(&other_node.id) {
                 existing_member_view.merge(other_node);
+                self.version_vector
+                    .versions
+                    .insert(existing_member_view.id, existing_member_view.version());
             } else {
+                self.version_vector
+                    .versions
+                    .insert(other_node.id, other_node.version());
                 self.members.insert(other_node.id, other_node);
             }
         }
@@ -72,6 +88,14 @@ impl MemberView {
                 heartbeat: 0,
                 version: 1,
             }),
+        }
+    }
+
+    fn version(&self) -> u16 {
+        if let Some(state) = &self.state {
+            state.version
+        } else {
+            0
         }
     }
 
@@ -160,6 +184,8 @@ pub struct MemberViewState {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
     /// Tests that for all states a, b and c, merging b into a and then c into a is equivalent to merging c into b and then b into a, i.e.
     /// that the merge function is associative. This is the first important property of state-based CRDT. Commutativity and idempotence are
@@ -282,12 +308,19 @@ mod tests {
 
     impl Arbitrary for ClusterView {
         fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+            let mut version_vector = VersionVector::default();
             // Generate members so that the ids field always matches the map key
             let members = Vec::<MemberView>::arbitrary(g)
                 .into_iter()
-                .map(|n| (n.id, n))
+                .map(|n| {
+                    version_vector.versions.insert(n.id, n.version());
+                    (n.id, n)
+                })
                 .collect();
-            Self { members }
+            Self {
+                members,
+                version_vector,
+            }
         }
     }
 

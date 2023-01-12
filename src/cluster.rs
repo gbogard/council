@@ -3,6 +3,7 @@ use tokio::sync::watch;
 use self::{failure_detector::FailureDetector, views::ClusterView};
 
 pub mod failure_detector;
+pub mod version_vector;
 pub mod views;
 
 pub struct Cluster {
