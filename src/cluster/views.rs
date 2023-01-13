@@ -1,42 +1,36 @@
-use std::collections::HashMap;
+use std::collections::{HashMap};
 
 #[cfg(test)]
 use quickcheck::Arbitrary;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
+
 use url::Url;
 
-use super::version_vector::{self, VersionVector};
-use crate::node::{id::NodeId, NodeStatus};
+use super::version_vector::{VersionVector};
+use crate::node::{NodeId, NodeStatus};
 
 /// A view of how the running node views the cluster, that is how it views itself and its peers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ClusterView {
-    pub members: HashMap<NodeId, MemberView>,
-    pub version_vector: VersionVector,
+    pub known_members: HashMap<NodeId, MemberView>,
+    pub(crate) version_vector: VersionVector,
 }
 
 impl ClusterView {
-    pub(crate) fn initial(this_node_advertised_url: Url, peer_members: &[Url]) -> Self {
-        let mut members = HashMap::new();
+    pub(crate) fn initial(this_node_id: NodeId, this_node_advertised_url: Url) -> Self {
+        let mut known_members = HashMap::new();
         let mut version_vector = VersionVector::default();
 
-        for url in peer_members {
-            let member = MemberView::peer_node_initial_view(&url);
-            version_vector.versions.insert(member.id, member.version());
-            members.insert(member.id, member);
-        }
-
-        let this_node = MemberView::this_node_initial_view(this_node_advertised_url);
+        let this_node = MemberView::this_node_initial_view(this_node_id, this_node_advertised_url);
         version_vector
             .versions
-            .insert(this_node.id, this_node.version());
-        members.insert(this_node.id, this_node);
+            .insert(this_node_id, this_node.version());
+        known_members.insert(this_node_id, this_node);
 
         Self {
-            members,
+            known_members,
             version_vector,
         }
     }
@@ -44,8 +38,8 @@ impl ClusterView {
     /// Merges a received view from another node into this view.
     /// This function makes [ClusterView] a Convergent Replicated Data Type (CvRDT)
     pub(crate) fn merge(&mut self, other_view: ClusterView) {
-        for (_, other_node) in other_view.members {
-            if let Some(existing_member_view) = self.members.get_mut(&other_node.id) {
+        for (_, other_node) in other_view.known_members {
+            if let Some(existing_member_view) = self.known_members.get_mut(&other_node.id) {
                 existing_member_view.merge(other_node);
                 self.version_vector
                     .versions
@@ -54,7 +48,7 @@ impl ClusterView {
                 self.version_vector
                     .versions
                     .insert(other_node.id, other_node.version());
-                self.members.insert(other_node.id, other_node);
+                self.known_members.insert(other_node.id, other_node);
             }
         }
     }
@@ -70,21 +64,12 @@ pub struct MemberView {
 }
 
 impl MemberView {
-    fn peer_node_initial_view(advertised_addr: &Url) -> Self {
+    fn this_node_initial_view(id: NodeId, advertised_url: Url) -> Self {
         Self {
-            id: NodeId::from_url(&advertised_addr),
-            advertised_addr: advertised_addr.clone(),
-            state: None,
-        }
-    }
-
-    fn this_node_initial_view(advertised_url: Url) -> Self {
-        Self {
-            id: NodeId::from_url(&advertised_url),
+            id,
             advertised_addr: advertised_url,
             state: Some(MemberViewState {
                 node_status: NodeStatus::Joining,
-                started_at: OffsetDateTime::now_utc(),
                 heartbeat: 0,
                 version: 1,
             }),
@@ -105,53 +90,41 @@ impl MemberView {
             "Tried to merge unrelated member views"
         );
 
-        match (&mut self.state, incoming.state) {
-            // Whenever the incoming view carries data and ours doesn't, discard our view
-            (None, Some(s)) => self.state = Some(s),
-
-            // If the incoming view's started_at field indicates a newer generation, discard our view
-            (Some(self_state), Some(incoming_state))
-                if incoming_state.started_at > self_state.started_at =>
-            {
-                self.state = Some(incoming_state)
+        if incoming.id.generation > self.id.generation {
+            *self = incoming
+        } else if incoming.id.generation == self.id.generation {
+            match (&mut self.state, incoming.state) {
+                // Whenever the incoming view carries data and ours doesn't, discard our view
+                (None, Some(s)) => self.state = Some(s),
+                // If the incoming version is stricly superior to our local view's version, accept the incoming node status and version
+                (Some(self_state), Some(incoming_state))
+                    if incoming_state.version > self_state.version =>
+                {
+                    self_state.node_status = incoming_state.node_status;
+                    self_state.version = incoming_state.version;
+                    self_state.heartbeat =
+                        std::cmp::max(self_state.heartbeat, incoming_state.heartbeat);
+                }
+                // If our local view's version is strictly superior to the incoming view's version, keep our local node status and version
+                (Some(self_state), Some(incoming_state))
+                    if incoming_state.version < self_state.version =>
+                {
+                    self_state.heartbeat =
+                        std::cmp::max(self_state.heartbeat, incoming_state.heartbeat);
+                }
+                // If our both view have the same version number but conflicting statuses, resolve the conflict
+                // by applying status priority rules
+                (Some(self_state), Some(incoming_state))
+                    if self_state.node_status != incoming_state.node_status =>
+                {
+                    self_state.version += 1;
+                    self_state.heartbeat =
+                        std::cmp::max(self_state.heartbeat, incoming_state.heartbeat);
+                    self_state.node_status =
+                        std::cmp::max(self_state.node_status, incoming_state.node_status)
+                }
+                _ => (),
             }
-
-            // If our local view's started_at field indicates a newer generation, discard the incoming view
-            (Some(self_state), Some(incoming_state))
-                if self_state.started_at > incoming_state.started_at => {}
-
-            // If the incoming version is stricly superior to our local view's version, accept the incoming node status and version
-            (Some(self_state), Some(incoming_state))
-                if incoming_state.version > self_state.version =>
-            {
-                self_state.node_status = incoming_state.node_status;
-                self_state.version = incoming_state.version;
-                self_state.heartbeat =
-                    std::cmp::max(self_state.heartbeat, incoming_state.heartbeat);
-            }
-
-            // If our local view's version is strictly superior to the incoming view's version, keep our local node status and version
-            (Some(self_state), Some(incoming_state))
-                if incoming_state.version < self_state.version =>
-            {
-                self_state.heartbeat =
-                    std::cmp::max(self_state.heartbeat, incoming_state.heartbeat);
-            }
-
-            // If our both view have the same version number but conflicting statuses, resolve the conflict
-            // by applying status priority rules
-            (Some(self_state), Some(incoming_state))
-                if self_state.node_status != incoming_state.node_status =>
-            {
-                self_state.version += 1;
-                self_state.heartbeat =
-                    std::cmp::max(self_state.heartbeat, incoming_state.heartbeat);
-                self_state.node_status =
-                    std::cmp::max(self_state.node_status, incoming_state.node_status)
-            }
-
-            (Some(_), Some(_)) => {}
-            (_, None) => {}
         };
     }
 }
@@ -160,11 +133,6 @@ impl MemberView {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct MemberViewState {
     pub node_status: NodeStatus,
-    /// This field is used to disambiguate successive restarts of the same node.
-    /// When a node restarts after exiting the cluster, it will have a different started_at value.
-    /// When reconciling two views of the same node, the highest started_at value always wins.
-    /// If the two views have an identical started_at field, then we use the version field to reconcile them.
-    pub started_at: OffsetDateTime,
     /// This increases every time the node's status changes (from Joining to Up, from Up to Leaving ...).
     /// The version number is used to reconcile gossips. When reconciling two views of the same node,
     /// the highest version value always wins.
@@ -317,8 +285,9 @@ mod tests {
                     (n.id, n)
                 })
                 .collect();
+
             Self {
-                members,
+                known_members: members,
                 version_vector,
             }
         }
@@ -339,7 +308,6 @@ mod tests {
             Self {
                 node_status: NodeStatus::arbitrary(g),
                 version: u16::arbitrary(g),
-                started_at: OffsetDateTime::arbitrary(g),
                 heartbeat: u64::arbitrary(g),
             }
         }

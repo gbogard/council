@@ -1,33 +1,69 @@
+use std::{
+    hash::{Hash, Hasher},
+    time::{SystemTime},
+};
+
 #[cfg(test)]
 use quickcheck::Arbitrary;
+use url::Url;
 
-pub mod id {
-    use std::hash::{Hash, Hasher};
+/// A [NodeId] uniquely indentifies a node and its specific execution.
+/// When a node crashses or leaves the cluster, it cannot have the same [NodeId] as the previous run,
+/// even if it has the same URL.
+#[derive(Copy, Clone, PartialEq, PartialOrd, Eq, Ord, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct NodeId {
+    /// This field uniquely is obtained by hashing the node's advertised URL, which
+    /// must be unique troughout the entire cluster
+    pub unique_id: u64,
+    /// This field is used to disambiguate successive restarts of the same node.
+    /// It is simply the number of seconds elapsed since the UNIX epoch at the time the node was started.
+    /// When a node restarts after exiting the cluster, it will have a different generation value.
+    /// When reconciling two views of the same node, the most recent generation always wins.
+    /// If the two views have an identical generation field, then we use the version field to reconcile them.
+    pub generation: u64,
+}
 
-    #[cfg(test)]
-    use quickcheck::Arbitrary;
-    use url::Url;
-
-    /// A [NodeId] is a 64-bit number uniquely identifying a single node in a cluster
-    #[repr(transparent)]
-    #[derive(Copy, Clone, PartialEq, PartialOrd, Eq, Ord, Debug, Hash)]
-    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    pub struct NodeId(pub(crate) u64);
-
-    impl NodeId {
-        /// Builds a [NodeId] whose value is a hash of the provided URL
-        pub fn from_url(url: &Url) -> Self {
-            let mut hasher = crate::hasher::deterministic_hasher();
-            url.hash(&mut hasher);
-            Self(hasher.finish())
+impl NodeId {
+    /// Builds a [NodeId] whose value is a hash of the provided URL
+    pub fn from_url(url: &Url, node_started_at: SystemTime) -> Self {
+        let generation = node_started_at
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mut hasher = siphasher::sip::SipHasher::new();
+        url.hash(&mut hasher);
+        Self {
+            unique_id: hasher.finish(),
+            generation,
         }
     }
+}
 
-    #[cfg(test)]
-    impl Arbitrary for NodeId {
-        fn arbitrary(g: &mut quickcheck::Gen) -> Self {
-            NodeId(u64::arbitrary(g))
+#[cfg(test)]
+impl Arbitrary for NodeId {
+    fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+        NodeId {
+            unique_id: u64::arbitrary(g),
+            generation: u64::arbitrary(g),
         }
+    }
+}
+
+#[repr(transparent)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Version {
+    number: u64,
+}
+
+impl Version {
+    pub(crate) fn new() -> Version {
+        Version { number: 0 }
+    }
+
+    pub(crate) fn incr(&mut self) {
+        self.number += 1;
     }
 }
 

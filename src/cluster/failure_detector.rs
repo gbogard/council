@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::node::id::NodeId;
+use crate::node::NodeId;
 
 const HEARTBEAT_INTERVALS_WINDOW_SIZE: u32 = 255;
 
@@ -18,6 +18,7 @@ const HEARTBEAT_INTERVALS_WINDOW_SIZE: u32 = 255;
 /// > The suspicion level of failure is represented by a value called phi.
 /// > The basic idea of the phi failure detector is to express the value of phi on a scale that is dynamically adjusted to reflect current network conditions.
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone)]
 pub struct FailureDetector {
     members: HashMap<NodeId, FailureDetectorMember>,
     pub phi_treshold: f64,
@@ -57,8 +58,29 @@ impl FailureDetector {
             _ => (),
         }
     }
+
+    pub fn live_members<'a>(&'a self, now: Instant) -> impl Iterator<Item = NodeId> + 'a {
+        self.members.iter().filter_map(move |(node_id, node)| {
+            if node.phi(now).unwrap_or(0.0) < self.phi_treshold {
+                Some(*node_id)
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn unreachable_members<'a>(&'a self, now: Instant) -> impl Iterator<Item = NodeId> + 'a {
+        self.members.iter().filter_map(move |(node_id, node)| {
+            if node.phi(now).unwrap_or(0.0) >= self.phi_treshold {
+                Some(*node_id)
+            } else {
+                None
+            }
+        })
+    }
 }
 
+#[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 struct FailureDetectorMember {
     last_heartbeat: u64,

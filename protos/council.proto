@@ -1,2 +1,33 @@
 syntax = "proto3";
 package council;
+
+message VersionVector {
+    map<uint64, uint32> versions = 1;
+}
+
+message MemberView {
+    uint64 id = 1;
+    string advertised_addr = 2;
+    MemberViewState state = 3;
+}
+
+message MemberViewState {
+    uint32 node_status = 1;
+    uint64 started_at = 2;
+    uint32 version = 3;
+    uint64 heartbeat = 4;
+}
+
+message PartialClusterView {
+    uint64 this_node_id = 1;
+    map<uint64, MemberView> members = 2;
+}
+
+message HeartbeatMessage {
+    map<uint64, uint64> heartbeats = 1;
+}
+
+service GossipService {
+    rpc ExchangeClusterViews (PartialClusterView) returns (PartialClusterView); 
+    rpc ExchangeHeartbeats (HeartbeatMessage) returns (HeartbeatMessage); 
+}

@@ -19,10 +19,12 @@ time = "0.3.17"
 tonic = "0.8.3"
 prost = "0.11"
 serde = { version = "1.0.152", optional = true, features = ["derive"] }
+siphasher = "0.3.10"
 
 [dev-dependencies]
 quickcheck = "1"
 quickcheck_macros = "1"
+time = { version = "0.3", features = ["quickcheck"] }
 
 [build-dependencies]
 tonic-build = "0.8"

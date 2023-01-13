@@ -1,8 +1,5 @@
 FROM rust:1.66.0-slim-bullseye
 
-# accelerate file sharing in vscode MAC/WINDOS
-ENV CARGO_TARGET_DIR="/tmp/target"
-
 # OS dependencies
 RUN apt update
 RUN apt install curl -y

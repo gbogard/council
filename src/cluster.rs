@@ -1,17 +1,21 @@
-use tokio::sync::watch;
+use std::collections::HashSet;
 
-use self::{failure_detector::FailureDetector, views::ClusterView};
+use url::Url;
 
+use self::{
+    convergence_monitor::ConvergenceMonitor, failure_detector::FailureDetector, views::ClusterView,
+};
+
+pub mod convergence_monitor;
 pub mod failure_detector;
 pub mod version_vector;
 pub mod views;
 
-pub struct Cluster {
-    state: watch::Sender<State>,
-}
-
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-struct State {
-    cluster_view: ClusterView,
-    failure_detector: FailureDetector,
+#[derive(Clone)]
+pub struct Cluster {
+    pub cluster_view: ClusterView,
+    pub peer_nodes: HashSet<Url>,
+    pub failure_detector: FailureDetector,
+    pub convergence_monitor: ConvergenceMonitor,
 }
