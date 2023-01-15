@@ -1,13 +1,12 @@
-use std::collections::{HashMap};
+use std::collections::HashMap;
 
 #[cfg(test)]
 use quickcheck::Arbitrary;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-
 use url::Url;
 
-use super::version_vector::{VersionVector};
+use super::version_vector::VersionVector;
 use crate::node::{NodeId, NodeStatus};
 
 /// A view of how the running node views the cluster, that is how it views itself and its peers.
@@ -16,22 +15,30 @@ use crate::node::{NodeId, NodeStatus};
 pub struct ClusterView {
     pub known_members: HashMap<NodeId, MemberView>,
     pub(crate) version_vector: VersionVector,
+    pub(crate) heartbeats: HashMap<NodeId, u64>,
 }
 
 impl ClusterView {
     pub(crate) fn initial(this_node_id: NodeId, this_node_advertised_url: Url) -> Self {
         let mut known_members = HashMap::new();
+        let mut heartbeats = HashMap::new();
         let mut version_vector = VersionVector::default();
 
         let this_node = MemberView::this_node_initial_view(this_node_id, this_node_advertised_url);
-        version_vector
-            .versions
-            .insert(this_node_id, this_node.version());
+        version_vector.versions.insert(
+            this_node_id,
+            this_node.state.as_ref().map_or(0, |s| s.version),
+        );
+        heartbeats.insert(
+            this_node.id,
+            this_node.state.as_ref().map_or(0, |s| s.heartbeat),
+        );
         known_members.insert(this_node_id, this_node);
 
         Self {
             known_members,
             version_vector,
+            heartbeats,
         }
     }
 
@@ -41,13 +48,26 @@ impl ClusterView {
         for (_, other_node) in other_view.known_members {
             if let Some(existing_member_view) = self.known_members.get_mut(&other_node.id) {
                 existing_member_view.merge(other_node);
-                self.version_vector
-                    .versions
-                    .insert(existing_member_view.id, existing_member_view.version());
+                self.version_vector.versions.insert(
+                    existing_member_view.id,
+                    existing_member_view.state.as_ref().map_or(0, |s| s.version),
+                );
+                self.heartbeats.insert(
+                    existing_member_view.id,
+                    existing_member_view
+                        .state
+                        .as_ref()
+                        .map_or(0, |s| s.heartbeat),
+                );
             } else {
-                self.version_vector
-                    .versions
-                    .insert(other_node.id, other_node.version());
+                self.version_vector.versions.insert(
+                    other_node.id,
+                    other_node.state.as_ref().map_or(0, |s| s.version),
+                );
+                self.heartbeats.insert(
+                    other_node.id,
+                    other_node.state.as_ref().map_or(0, |s| s.heartbeat),
+                );
                 self.known_members.insert(other_node.id, other_node);
             }
         }
@@ -73,14 +93,6 @@ impl MemberView {
                 heartbeat: 0,
                 version: 1,
             }),
-        }
-    }
-
-    fn version(&self) -> u16 {
-        if let Some(state) = &self.state {
-            state.version
-        } else {
-            0
         }
     }
 
@@ -277,11 +289,15 @@ mod tests {
     impl Arbitrary for ClusterView {
         fn arbitrary(g: &mut quickcheck::Gen) -> Self {
             let mut version_vector = VersionVector::default();
+            let mut heartbeats = HashMap::new();
             // Generate members so that the ids field always matches the map key
             let members = Vec::<MemberView>::arbitrary(g)
                 .into_iter()
                 .map(|n| {
-                    version_vector.versions.insert(n.id, n.version());
+                    version_vector
+                        .versions
+                        .insert(n.id, n.state.as_ref().map_or(0, |s| s.version));
+                    heartbeats.insert(n.id, n.state.as_ref().map_or(0, |s| s.heartbeat));
                     (n.id, n)
                 })
                 .collect();
@@ -289,6 +305,7 @@ mod tests {
             Self {
                 known_members: members,
                 version_vector,
+                heartbeats,
             }
         }
     }

@@ -59,6 +59,14 @@ impl FailureDetector {
         }
     }
 
+    pub fn is_live(&self, node_id: NodeId, now: Instant) -> bool {
+        self.members
+            .get(&node_id)
+            .and_then(|n| n.phi(now))
+            .map(|phi| phi < self.phi_treshold)
+            .unwrap_or(false)
+    }
+
     pub fn live_members<'a>(&'a self, now: Instant) -> impl Iterator<Item = NodeId> + 'a {
         self.members.iter().filter_map(move |(node_id, node)| {
             if node.phi(now).unwrap_or(0.0) < self.phi_treshold {

@@ -14,12 +14,11 @@ tokio = { version = "1.24.1", features = ["sync", "rt"]}
 tracing = "0.1.37"
 thiserror = "1.0.38"
 url = "2.3.1"
-twox-hash = "1.6.3"
-time = "0.3.17"
 tonic = "0.8.3"
 prost = "0.11"
 serde = { version = "1.0.152", optional = true, features = ["derive"] }
 siphasher = "0.3.10"
+rand = "0.8.5"
 
 [dev-dependencies]
 quickcheck = "1"

@@ -7,7 +7,7 @@ use crate::node::NodeId;
 /// last observed version vector.
 ///
 /// By building a [VersionVectorOffset](super::version_vector::VersionVectorOffset) with the running node's [Cluster view](super::views::ClusterView)
-/// as the left-hand side, and an other node's version vector (as recorded by this component) as the right-hand side, we can know which nodes
+/// as the left-hand side, and an other node's version vector (as recorded by this component) as the right-hand side, we know which nodes
 /// are lagging behind the running node's cluster view; and if so, exactly which [member views](super::views::MemberView) need to be gossipped about.
 ///
 /// This lets us save network bandwidth when gossipping: when we know that no other node is lagging behind us, we can just gossip about heartbeats
@@ -28,6 +28,10 @@ impl ConvergenceMonitor {
         }
     }
 
+    pub(crate) fn get(&self, node_id: NodeId) -> Option<&VersionVector> {
+        self.observed_states_per_node.get(&node_id)
+    }
+
     pub(crate) fn record_version_vector(
         &mut self,
         node_id: NodeId,
@@ -40,6 +44,15 @@ impl ConvergenceMonitor {
         } else {
             self.observed_states_per_node
                 .insert(node_id, version_vector.clone());
+        }
+    }
+
+    pub(crate) fn has_converged(&self) -> bool {
+        let mut iter = self.observed_states_per_node.values();
+        if let Some(first) = iter.next() {
+            iter.all(|n| n == first)
+        } else {
+            false
         }
     }
 }

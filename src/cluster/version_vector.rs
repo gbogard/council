@@ -14,10 +14,12 @@ pub struct VersionVector {
 }
 
 impl VersionVector {
+    /// Merges two vectors together by retaining the maximum version for each node
     pub(crate) fn merge(&mut self, other: &VersionVector) {
         for (node_id, version) in &other.versions {
             if let Some(existing) = self.versions.get_mut(node_id) {
-                *existing = std::cmp::max(*existing, *version);
+                let new_version = std::cmp::max(*existing, *version);
+                *existing = new_version;
             } else {
                 self.versions.insert(*node_id, *version);
             }
@@ -32,12 +34,12 @@ impl VersionVector {
 /// Implementation-wise: the comparison function goes trough every node/version pair
 /// in the LHS vector and comapres it with its RHS counterpart. If the RHS version for a node is strictly inferior to
 /// its LHS counterpart, or if it is absent altogether from the RHS, we mark it as "behind" the LHS
-pub struct VersionVectorOffset<'lhs, 'rhs> {
+pub(crate) struct VersionVectorOffset<'lhs, 'rhs> {
     lhs: &'lhs VersionVector,
     rhs: &'rhs VersionVector,
     /// A set of nodes whose latest version has not yet been observed by the RHS
     /// A non-empty set indicates that the RHS version vector is lagging behind.
-    behind_lhs: HashSet<NodeId>,
+    pub(crate) behind_lhs: HashSet<NodeId>,
 }
 
 impl<'lhs, 'rhs> VersionVectorOffset<'lhs, 'rhs> {

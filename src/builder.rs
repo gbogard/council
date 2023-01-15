@@ -3,17 +3,13 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use tokio::{
-    sync::{broadcast, mpsc},
-};
+use tokio::sync::{broadcast, mpsc};
 use url::Url;
 
 use crate::{
     cluster::{
-        convergence_monitor::{ConvergenceMonitor},
-        failure_detector::{FailureDetector},
-        views::ClusterView,
-        Cluster,
+        convergence_monitor::ConvergenceMonitor, failure_detector::FailureDetector,
+        views::ClusterView, Cluster,
     },
     node::NodeId,
     Council,
@@ -77,7 +73,7 @@ impl CouncilBuilder {
 
         Council {
             cluster_events_receiver,
-            incoming_gossip_sender,
+            main_thread_message_sender: incoming_gossip_sender,
             main_thread,
         }
     }

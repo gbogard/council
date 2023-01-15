@@ -14,6 +14,7 @@ extern crate quickcheck;
 extern crate quickcheck_macros;
 
 mod builder;
+
 pub mod cluster;
 pub mod grpc;
 pub mod node;
@@ -22,7 +23,7 @@ pub use self::builder::*;
 
 pub struct Council {
     cluster_events_receiver: broadcast::Receiver<Cluster>,
-    incoming_gossip_sender: mpsc::Sender<IncomingGossipMessage>,
+    main_thread_message_sender: mpsc::Sender<Message>,
     main_thread: JoinHandle<()>,
 }
 
@@ -34,12 +35,12 @@ impl Council {
     pub(crate) async fn main_thread(
         mut outgoing_gossip_interval: Interval,
         _cluster: Cluster,
-        mut incoming_gossip_receiver: mpsc::Receiver<IncomingGossipMessage>,
+        mut message_receiver: mpsc::Receiver<Message>,
         _cluster_events_sender: broadcast::Sender<Cluster>,
     ) {
         loop {
             select! {
-                Some(_incoming_gossip) = incoming_gossip_receiver.recv() => {},
+                Some(incoming_message) = message_receiver.recv() => {},
                 _ = outgoing_gossip_interval.tick() => {
 
                 }
@@ -48,4 +49,4 @@ impl Council {
     }
 }
 
-struct IncomingGossipMessage {}
+struct Message {}
