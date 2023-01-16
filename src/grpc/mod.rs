@@ -3,6 +3,7 @@ mod protos {
 }
 
 mod client;
+mod dtos_conversions;
 mod server;
 
 pub use server::*;

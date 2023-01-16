@@ -1,8 +1,9 @@
 use std::{
     hash::{Hash, Hasher},
-    time::{SystemTime},
+    time::SystemTime,
 };
 
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 #[cfg(test)]
 use quickcheck::Arbitrary;
 use url::Url;
@@ -68,7 +69,7 @@ impl Version {
 }
 
 #[repr(u8)]
-#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, TryFromPrimitive, IntoPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum NodeStatus {
     // A node attempts to join the cluster

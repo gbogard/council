@@ -19,6 +19,7 @@ prost = "0.11"
 serde = { version = "1.0.152", optional = true, features = ["derive"] }
 siphasher = "0.3.10"
 rand = "0.8.5"
+num_enum = "0.5.7"
 
 [dev-dependencies]
 quickcheck = "1"

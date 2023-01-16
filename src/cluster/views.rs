@@ -74,6 +74,11 @@ impl ClusterView {
     }
 }
 
+pub(crate) struct PartialClusterView {
+    pub(crate) this_node_id: NodeId,
+    pub(crate) members: HashMap<NodeId, MemberView>,
+}
+
 /// A view of how the running node views one of its peers
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
