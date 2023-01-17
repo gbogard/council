@@ -3,7 +3,11 @@ use std::collections::HashMap;
 use rand::seq::SliceRandom;
 use url::Url;
 
-use super::{version_vector::VersionVectorOffset, views::MemberView, Cluster};
+use super::{
+    version_vector::VersionVectorOffset,
+    views::{MemberView, PartialClusterView},
+    Cluster,
+};
 use crate::node::NodeId;
 
 const GOSSIP_DESTINATIONS_SAMPLE_SIZE: u8 = 5;
@@ -21,15 +25,25 @@ impl Cluster {
     ///   They are heavier than heartbeats exchanges, and are triggered when we know that a node is lagging behind us,
     ///   (as recorded by the ConvergenceMonitor)
     pub(crate) fn select_gossip_destinations<ExchangeHeartbeatsF, ExchangeClusterViewsF>(
-        &self,
+        &mut self,
         exchange_heartbeats: ExchangeHeartbeatsF,
         exchange_cluster_views: ExchangeClusterViewsF,
     ) where
-        ExchangeClusterViewsF: Fn(Url, HashMap<NodeId, MemberView>),
+        ExchangeClusterViewsF: Fn(Url, PartialClusterView),
         ExchangeHeartbeatsF: Fn(Url, HashMap<NodeId, u64>),
     {
         let mut cluster_view_exchanges = 0;
         let mut heartbeats_destinations = Vec::new();
+
+        self.unknwon_peer_nodes.retain(|url| {
+            let view = PartialClusterView {
+                this_node_id: self.this_node_id,
+                members: self.cluster_view.known_members.clone(),
+            };
+            cluster_view_exchanges += 1;
+            exchange_cluster_views(url.clone(), view);
+            false
+        });
 
         for (_, n) in &self.cluster_view.known_members {
             if cluster_view_exchanges >= GOSSIP_DESTINATIONS_SAMPLE_SIZE {
@@ -63,7 +77,7 @@ impl Cluster {
     pub(crate) fn collect_partial_cluster_view_of_newer_nodes(
         &self,
         node_id: NodeId,
-    ) -> Option<HashMap<NodeId, MemberView>> {
+    ) -> Option<PartialClusterView> {
         self.convergence_monitor
             .get(node_id)
             .map(|rhs| {
@@ -80,6 +94,15 @@ impl Cluster {
                     .collect();
                 dest
             })
-            .filter(|dest| !dest.is_empty())
+            .and_then(|destinations| {
+                if destinations.is_empty() {
+                    None
+                } else {
+                    Some(PartialClusterView {
+                        this_node_id: self.this_node_id,
+                        members: destinations,
+                    })
+                }
+            })
     }
 }

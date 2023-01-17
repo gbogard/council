@@ -20,19 +20,23 @@ const HEARTBEAT_INTERVALS_WINDOW_SIZE: u32 = 255;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[derive(Clone)]
 pub struct FailureDetector {
+    this_node_id: NodeId,
     members: HashMap<NodeId, FailureDetectorMember>,
     pub phi_treshold: f64,
 }
 
 impl FailureDetector {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(this_node_id: NodeId) -> Self {
         Self {
+            this_node_id,
             members: HashMap::new(),
             phi_treshold: 8.0,
         }
     }
 
     pub(crate) fn record_heartbeat(&mut self, node_id: NodeId, last_heartbeat: u64) {
+        debug_assert_ne!(node_id, self.this_node_id);
+
         let last_heartbeat_received_at = Instant::now();
         match self.members.get_mut(&node_id) {
             Some(member) if member.last_heartbeat < last_heartbeat => {

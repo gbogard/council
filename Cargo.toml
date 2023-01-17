@@ -25,6 +25,7 @@ num_enum = "0.5.7"
 quickcheck = "1"
 quickcheck_macros = "1"
 time = { version = "0.3", features = ["quickcheck"] }
+warp = "0.3.3"
 
 [build-dependencies]
 tonic-build = "0.8"

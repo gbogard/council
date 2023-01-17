@@ -6,7 +6,7 @@ use crate::node::NodeId;
 /// The [convergence monitor](ConvergenceMonitor) associates [node ids](NodeId) with their
 /// last observed version vector.
 ///
-/// By building a [VersionVectorOffset](super::version_vector::VersionVectorOffset) with the running node's [Cluster view](super::views::ClusterView)
+/// By building a "version vector offset" with the running node's [Cluster view](super::views::ClusterView)
 /// as the left-hand side, and an other node's version vector (as recorded by this component) as the right-hand side, we know which nodes
 /// are lagging behind the running node's cluster view; and if so, exactly which [member views](super::views::MemberView) need to be gossipped about.
 ///
