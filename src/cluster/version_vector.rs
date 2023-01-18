@@ -1,5 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
+#[cfg(test)]
+use quickcheck::Arbitrary;
+
 use crate::node::NodeId;
 
 /// A [VersionVector] stores associates [node ids](NodeId) with a last seen version.
@@ -14,16 +17,9 @@ pub struct VersionVector {
 }
 
 impl VersionVector {
-    /// Merges two vectors together by retaining the maximum version for each node
-    pub(crate) fn merge(&mut self, other: &VersionVector) {
-        for (node_id, version) in &other.versions {
-            if let Some(existing) = self.versions.get_mut(node_id) {
-                let new_version = std::cmp::max(*existing, *version);
-                *existing = new_version;
-            } else {
-                self.versions.insert(*node_id, *version);
-            }
-        }
+    pub(crate) fn record_version(&mut self, node_id: NodeId, version: u16) {
+        let existing_version = self.versions.entry(node_id).or_insert(version);
+        *existing_version = std::cmp::max(*existing_version, version);
     }
 }
 
@@ -65,67 +61,10 @@ impl<'lhs, 'rhs> VersionVectorOffset<'lhs, 'rhs> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-
-    use quickcheck::Arbitrary;
-
-    use super::VersionVector;
-    use crate::node::NodeId;
-
-    impl Arbitrary for VersionVector {
-        fn arbitrary(g: &mut quickcheck::Gen) -> Self {
-            VersionVector {
-                versions: HashMap::<NodeId, u16>::arbitrary(g),
-            }
+impl Arbitrary for VersionVector {
+    fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+        VersionVector {
+            versions: HashMap::<NodeId, u16>::arbitrary(g),
         }
-    }
-
-    #[quickcheck]
-    fn version_vector_merge_is_associative(
-        mut a: VersionVector,
-        mut b: VersionVector,
-        c: VersionVector,
-    ) -> bool {
-        let merged_a_and_b_first = {
-            let mut res = a.clone();
-            res.merge(&b);
-            res.merge(&c);
-            res
-        };
-        let merged_b_and_c_first = {
-            b.merge(&c);
-            a.merge(&b);
-            a
-        };
-        merged_a_and_b_first == merged_b_and_c_first
-    }
-
-    #[quickcheck]
-    fn version_vector_merge_is_commutative(a: VersionVector, mut b: VersionVector) -> bool {
-        let merged_a_b = {
-            let mut a = a.clone();
-            a.merge(&b);
-            a
-        };
-        let merged_b_a = {
-            b.merge(&a);
-            b
-        };
-        merged_a_b == merged_b_a
-    }
-
-    #[quickcheck]
-    fn version_vector_merge_is_idempotent(mut a: VersionVector, b: VersionVector) -> bool {
-        let merged_a_b = {
-            a.merge(&b);
-            a
-        };
-        let merged_a_b_b = {
-            let mut merged_a_b = merged_a_b.clone();
-            merged_a_b.merge(&b);
-            merged_a_b
-        };
-        merged_a_b == merged_a_b_b
     }
 }

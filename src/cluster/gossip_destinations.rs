@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, future::Future};
 
 use rand::seq::SliceRandom;
+use tokio::task::JoinSet;
 use url::Url;
 
 use super::{
@@ -24,14 +25,25 @@ impl Cluster {
     ///   of the cluster (as seen by the destination) in return.
     ///   They are heavier than heartbeats exchanges, and are triggered when we know that a node is lagging behind us,
     ///   (as recorded by the ConvergenceMonitor)
-    pub(crate) fn select_gossip_destinations<ExchangeHeartbeatsF, ExchangeClusterViewsF>(
+    pub(crate) fn select_gossip_destinations<
+        ExchangeHeartbeatsF,
+        ExchangeClusterViewsF,
+        Out,
+        ExchangeHeartbeatsOutFut,
+        ExchangeClusterViewsOutFut,
+    >(
         &mut self,
         exchange_heartbeats: ExchangeHeartbeatsF,
         exchange_cluster_views: ExchangeClusterViewsF,
-    ) where
-        ExchangeClusterViewsF: Fn(Url, PartialClusterView),
-        ExchangeHeartbeatsF: Fn(Url, HashMap<NodeId, u64>),
+    ) -> JoinSet<Out>
+    where
+        ExchangeClusterViewsF: Fn(Url, PartialClusterView) -> ExchangeClusterViewsOutFut,
+        ExchangeHeartbeatsF: Fn(Url, HashMap<NodeId, u64>) -> ExchangeHeartbeatsOutFut,
+        ExchangeClusterViewsOutFut: Future<Output = Out> + Send + 'static,
+        ExchangeHeartbeatsOutFut: Future<Output = Out> + Send + 'static,
+        Out: Send + Sync + 'static,
     {
+        let mut join_set = JoinSet::new();
         let mut cluster_view_exchanges = 0;
         let mut heartbeats_destinations = Vec::new();
 
@@ -54,7 +66,10 @@ impl Cluster {
                 self.collect_partial_cluster_view_of_newer_nodes(n.id)
             {
                 cluster_view_exchanges += 1;
-                exchange_cluster_views(n.advertised_addr.clone(), partial_cluster_view_to_exchange);
+                join_set.spawn(exchange_cluster_views(
+                    n.advertised_addr.clone(),
+                    partial_cluster_view_to_exchange,
+                ));
                 continue;
             }
 
@@ -66,8 +81,13 @@ impl Cluster {
         for dest in heartbeats_destinations
             .choose_multiple(&mut rand::thread_rng(), heartbeats_exchanges as usize)
         {
-            exchange_heartbeats(dest.clone(), self.cluster_view.heartbeats.clone())
+            join_set.spawn(exchange_heartbeats(
+                dest.clone(),
+                self.cluster_view.heartbeats.clone(),
+            ));
         }
+
+        join_set
     }
 
     /// Given a node id, this returns a partial cluster view containing only the nodes

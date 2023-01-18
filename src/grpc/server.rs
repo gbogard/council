@@ -1,6 +1,6 @@
 pub use protos::gossip_service_server::GossipServiceServer;
 use tokio::sync::{mpsc::Sender, oneshot};
-use tonic::{async_trait, transport::Channel, Response, Status};
+use tonic::{async_trait, Response, Status};
 
 use super::protos;
 use crate::{Council, Message};

@@ -92,7 +92,6 @@ impl CouncilBuilder {
             outgoing_gossip_interval,
             cluster,
             message_receiver,
-            message_sender.clone(),
             cluster_events_sender,
             client,
         ));

@@ -32,19 +32,18 @@ impl ConvergenceMonitor {
         self.observed_states_per_node.get(&node_id)
     }
 
-    pub(crate) fn record_version_vector(
+    pub(crate) fn record_version(
         &mut self,
-        node_id: NodeId,
-        version_vector: &VersionVector,
+        observer_node_id: NodeId,
+        observed_node_id: NodeId,
+        version: u16,
     ) {
-        debug_assert_ne!(node_id, self.this_node_id);
+        debug_assert_ne!(observer_node_id, self.this_node_id);
 
-        if let Some(existing) = self.observed_states_per_node.get_mut(&node_id) {
-            existing.merge(version_vector)
-        } else {
-            self.observed_states_per_node
-                .insert(node_id, version_vector.clone());
-        }
+        self.observed_states_per_node
+            .entry(observed_node_id)
+            .or_default()
+            .record_version(observed_node_id, version)
     }
 
     pub(crate) fn has_converged(&self) -> bool {

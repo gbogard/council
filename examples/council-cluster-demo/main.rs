@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use council::{
-    grpc::{DefaultTonicChannelFactory, TonicChannelFactory},
+    grpc::{DefaultTonicChannelFactory},
     Council,
 };
 use rand::seq::SliceRandom;

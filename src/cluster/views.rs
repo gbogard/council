@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use super::version_vector::VersionVector;
-use crate::node::{NodeId, NodeStatus};
+use crate::{
+    node::{NodeId, NodeStatus},
+};
 
 /// A view of how the running node views the cluster, that is how it views itself and its peers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,8 +46,8 @@ impl ClusterView {
 
     /// Merges a received view from another node into this view.
     /// This function makes [ClusterView] a Convergent Replicated Data Type (CvRDT)
-    pub(crate) fn merge(&mut self, other_view: ClusterView) {
-        for (_, other_node) in other_view.known_members {
+    pub(crate) fn merge_partial_cluster_view(&mut self, other_view: PartialClusterView) {
+        for (_, other_node) in other_view.members {
             if let Some(existing_member_view) = self.known_members.get_mut(&other_node.id) {
                 existing_member_view.merge(other_node);
                 self.version_vector.versions.insert(
@@ -72,8 +74,21 @@ impl ClusterView {
             }
         }
     }
+
+    pub(crate) fn record_heartbeat(&mut self, node_id: NodeId, heartbeat: u64) {
+        let existing_heartbeat = self.heartbeats.entry(node_id).or_default();
+        *existing_heartbeat = std::cmp::max(heartbeat, *existing_heartbeat);
+        if let Some(state) = self
+            .known_members
+            .get_mut(&node_id)
+            .and_then(|s| s.state.as_mut())
+        {
+            state.heartbeat = std::cmp::max(heartbeat, state.heartbeat);
+        }
+    }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PartialClusterView {
     pub(crate) this_node_id: NodeId,
     pub(crate) members: HashMap<NodeId, MemberView>,
@@ -172,44 +187,25 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
-    /// Tests that for all states a, b and c, merging b into a and then c into a is equivalent to merging c into b and then b into a, i.e.
-    /// that the merge function is associative. This is the first important property of state-based CRDT. Commutativity and idempotence are
-    /// tested below.
-    ///
-    /// We could express associativity as "for all states a, b and c, merge(merge(a, b), c) = merge(a, merge(b, c))", except that here, we mutate
-    /// state rather than returning an immutable state so "merge" is not quite exactly a function in the mathemtical sense.
-    #[quickcheck]
-    fn cluster_view_merge_is_associative(
-        mut a: ClusterView,
-        mut b: ClusterView,
-        c: ClusterView,
-    ) -> bool {
-        let merged_a_and_b_first = {
-            let mut res = a.clone();
-            res.merge(b.clone());
-            res.merge(c.clone());
-            res
-        };
-        let merged_b_and_c_first = {
-            b.merge(c);
-            a.merge(b);
-            a
-        };
-        merged_a_and_b_first == merged_b_and_c_first
-    }
 
     /// Tests that for all states a and b, merging a into b is equivalent to merging b into a, i.e. that merging is commutative.
     /// Again, this could be expressed as "merge(a, b) = merge(b, a) for all states a and b", except that we use mutation rather then immutable states.
     #[quickcheck]
-    fn cluster_view_merge_is_commutative(a: ClusterView, mut b: ClusterView) -> bool {
+    fn cluster_view_merge_is_commutative(
+        mut cluster_view: ClusterView,
+        a: PartialClusterView,
+        b: PartialClusterView,
+    ) -> bool {
         let merged_a_b = {
-            let mut a = a.clone();
-            a.merge(b.clone());
-            a
+            let mut cluster_view = cluster_view.clone();
+            cluster_view.merge_partial_cluster_view(a.clone());
+            cluster_view.merge_partial_cluster_view(b.clone());
+            cluster_view
         };
         let merged_b_a = {
-            b.merge(a);
-            b
+            cluster_view.merge_partial_cluster_view(a);
+            cluster_view.merge_partial_cluster_view(b);
+            cluster_view
         };
         merged_a_b == merged_b_a
     }
@@ -217,14 +213,14 @@ mod tests {
     /// Tests that for all states a and b, once we have merged b into a, merging b again into the resulting state is a no-op,
     /// i.e. that merging is idempotent.
     #[quickcheck]
-    fn cluster_view_merge_is_idempotent(mut a: ClusterView, b: ClusterView) -> bool {
+    fn cluster_view_merge_is_idempotent(mut a: ClusterView, b: PartialClusterView) -> bool {
         let merged_a_b = {
-            a.merge(b.clone());
+            a.merge_partial_cluster_view(b.clone());
             a
         };
         let merged_a_b_b = {
             let mut merged_a_b = merged_a_b.clone();
-            merged_a_b.merge(b);
+            merged_a_b.merge_partial_cluster_view(b);
             merged_a_b
         };
         merged_a_b == merged_a_b_b
@@ -311,6 +307,21 @@ mod tests {
                 known_members: members,
                 version_vector,
                 heartbeats,
+            }
+        }
+    }
+
+    impl Arbitrary for PartialClusterView {
+        fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+            // Generate members so that the ids field always matches the map key
+            let members = Vec::<MemberView>::arbitrary(g)
+                .into_iter()
+                .map(|n| (n.id, n))
+                .collect();
+
+            Self {
+                this_node_id: NodeId::arbitrary(g),
+                members,
             }
         }
     }

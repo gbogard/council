@@ -20,11 +20,13 @@ serde = { version = "1.0.152", optional = true, features = ["derive"] }
 siphasher = "0.3.10"
 rand = "0.8.5"
 num_enum = "0.5.7"
+log = "0.4.17"
 
 [dev-dependencies]
 quickcheck = "1"
 quickcheck_macros = "1"
 time = { version = "0.3", features = ["quickcheck"] }
+simplelog = "0.12.0"
 warp = "0.3.3"
 
 [build-dependencies]

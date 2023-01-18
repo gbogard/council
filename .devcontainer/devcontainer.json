@@ -23,9 +23,6 @@
             "esbenp.prettier-vscode",
             "pbkit.vscode-pbkit",
             "bungcip.better-toml",
-            "mtxr.sqltools-driver-sqlite",
-            "mtxr.sqltools",
-            "skellock.just",
             "vadimcn.vscode-lldb"
           ]
         }
