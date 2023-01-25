@@ -18,7 +18,7 @@ const HEARTBEAT_INTERVALS_WINDOW_SIZE: u32 = 255;
 /// > The suspicion level of failure is represented by a value called phi.
 /// > The basic idea of the phi failure detector is to express the value of phi on a scale that is dynamically adjusted to reflect current network conditions.
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FailureDetector {
     this_node_id: NodeId,
     members: HashMap<NodeId, FailureDetectorMember>,
@@ -92,7 +92,7 @@ impl FailureDetector {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 struct FailureDetectorMember {
     last_heartbeat: u64,

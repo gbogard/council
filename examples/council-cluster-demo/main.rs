@@ -1,63 +1,41 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 
-use council::{
-    grpc::{DefaultTonicChannelFactory},
-    Council,
-};
-use rand::seq::SliceRandom;
-use tokio::sync::oneshot;
-use tonic::transport::Server;
-use url::Url;
+use application::Application;
+use log::LevelFilter;
+use simplelog::{Config, ConfigBuilder, SimpleLogger};
 
-struct RunningCouncil {
-    council_instance: Council,
-    server_shutdown: oneshot::Sender<()>,
-}
+mod application;
+mod http_server;
+mod logs;
+mod templates;
 
-struct ApplicationState {
-    instances: Vec<RunningCouncil>,
-}
+#[tokio::main]
+pub async fn main() {
+    let _ = SimpleLogger::init(
+        LevelFilter::Debug,
+        ConfigBuilder::new()
+            .add_filter_ignore_str("h2::codec")
+            .add_filter_ignore_str("tower::buffer")
+            .build(),
+    );
 
-impl ApplicationState {
-    fn start(size: u16) -> Self {
-        let mut rng = rand::thread_rng();
-        let base_port = 8080;
-        let urls: Vec<Url> = (0..size)
-            .map(|i| Url::parse(&format!("http://0.0.0.0:{}", base_port + i)).unwrap())
-            .collect();
-        let tonic_channel_factory = Arc::new(DefaultTonicChannelFactory::new());
-        let instances = urls
-            .iter()
-            .map(|url| {
-                let socket_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), url.port().unwrap());
-                let peer_nodes: Vec<Url> = urls.choose_multiple(&mut rng, 2).cloned().collect();
+    let number_of_nodes_to_start: u64 = std::env::args()
+        .find_map(|arg| arg.parse::<u64>().ok().filter(|n| n > &0 && n <= &100))
+        .unwrap_or(6);
 
-                let council = Council::builder(url.clone())
-                    .with_peer_nodes(&peer_nodes[..])
-                    .with_tonic_channel_factory_arc(Arc::clone(&tonic_channel_factory))
-                    .build();
-                let gossip_service = council.gossip_grpc_service();
+    log::info!("Starting {} Council nodes", number_of_nodes_to_start);
 
-                let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let app = Arc::new(Application::start(number_of_nodes_to_start).await);
+    let server = tokio::spawn(http_server::start_http_server(Arc::clone(&app)));
 
-                // Start the gRPC server in a seperate task
-                tokio::spawn(async move {
-                    Server::builder()
-                        .add_service(gossip_service)
-                        .serve_with_shutdown(socket_addr, async {
-                            let _ = shutdown_rx.await;
-                        })
-                        .await
-                });
+    log::info!("Demo is available on http://localhost:8080 !");
 
-                RunningCouncil {
-                    council_instance: council,
-                    server_shutdown: shutdown_tx,
-                }
-            })
-            .collect();
-        Self { instances }
+    tokio::select! {
+        signal = tokio::signal::ctrl_c() => {
+            signal.unwrap()
+        },
+        _ = server => {
+            panic!()
+        }
     }
 }
-
-pub fn main() {}

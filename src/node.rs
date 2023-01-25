@@ -1,5 +1,7 @@
 use std::{
+    fmt::Display,
     hash::{Hash, Hasher},
+    str::FromStr,
     time::SystemTime,
 };
 
@@ -12,7 +14,7 @@ use url::Url;
 /// When a node crashses or leaves the cluster, it cannot have the same [NodeId] as the previous run,
 /// even if it has the same URL.
 #[derive(Copy, Clone, PartialEq, PartialOrd, Eq, Ord, Debug, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(SerializeDisplay, DeserializeFromStr))]
 pub struct NodeId {
     /// This field uniquely is obtained by hashing the node's advertised URL, which
     /// must be unique troughout the entire cluster
@@ -38,6 +40,35 @@ impl NodeId {
             unique_id: hasher.finish(),
             generation,
         }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ParseNodeIdError;
+
+impl Display for ParseNodeIdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Cannot parse NodeId")
+    }
+}
+
+impl Display for NodeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}.{}", self.unique_id, self.generation))
+    }
+}
+
+impl FromStr for NodeId {
+    type Err = ParseNodeIdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (unique_id, generation) = s.split_once(".").ok_or(ParseNodeIdError)?;
+        let unique_id = unique_id.parse::<u64>().map_err(|_| ParseNodeIdError)?;
+        let generation = generation.parse::<u64>().map_err(|_| ParseNodeIdError)?;
+        Ok(NodeId {
+            unique_id,
+            generation,
+        })
     }
 }
 
@@ -90,6 +121,18 @@ pub enum NodeStatus {
     // The Down status is final.
     //A down node can never be marked up again unless the node is entirely restarted.
     Down = 5,
+}
+
+impl Display for NodeStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NodeStatus::Joining => f.write_str("Joining"),
+            NodeStatus::Up => f.write_str("Up"),
+            NodeStatus::Leaving => f.write_str("Leaving"),
+            NodeStatus::Exiting => f.write_str("Exiting"),
+            NodeStatus::Down => f.write_str("Down"),
+        }
+    }
 }
 
 #[cfg(test)]

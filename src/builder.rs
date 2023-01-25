@@ -65,24 +65,36 @@ impl CouncilBuilder {
         self
     }
     pub fn build(self) -> Council {
-        let (cluster_events_sender, cluster_events_receiver) = broadcast::channel(10);
+        let (cluster_events_sender, _) = broadcast::channel(10);
         let (message_sender, message_receiver) = mpsc::channel(10);
 
         let outgoing_gossip_interval = tokio::time::interval(self.gossip_interval);
 
-        let cluster_view = ClusterView::initial(self.this_node_id, self.this_node_advertised_url);
-        let peer_nodes = self.peer_nodes;
+        let peer_nodes: HashSet<Url> = self
+            .peer_nodes
+            .into_iter()
+            .filter(|u| u != &self.this_node_advertised_url)
+            .collect();
+
+        let cluster_view =
+            ClusterView::initial(self.this_node_id, self.this_node_advertised_url.clone());
         let failure_detector = FailureDetector::new(self.this_node_id);
         let convergence_monitor = ConvergenceMonitor::new(self.this_node_id);
 
         let cluster = Cluster {
             this_node_id: self.this_node_id,
+            this_advertised_url: self.this_node_advertised_url,
             cluster_view,
             unknwon_peer_nodes: peer_nodes.clone(),
             peer_nodes,
             failure_detector,
             convergence_monitor,
         };
+        log::info!(
+            "Creating Council instance with id {} and {} peer nodes",
+            cluster.this_node_id,
+            cluster.unknwon_peer_nodes.len()
+        );
 
         let client = Arc::new(CouncilClient {
             tonic_channel_factory: Arc::clone(&self.tonic_channel_factory),
@@ -92,12 +104,14 @@ impl CouncilBuilder {
             outgoing_gossip_interval,
             cluster,
             message_receiver,
-            cluster_events_sender,
+            message_sender.clone(),
+            cluster_events_sender.clone(),
             client,
         ));
 
         Council {
-            cluster_events_receiver,
+            this_node_id: self.this_node_id,
+            cluster_events_sender,
             tonic_channel_factory: self.tonic_channel_factory,
             main_thread_message_sender: message_sender,
             main_thread,

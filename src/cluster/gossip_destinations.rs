@@ -25,69 +25,74 @@ impl Cluster {
     ///   of the cluster (as seen by the destination) in return.
     ///   They are heavier than heartbeats exchanges, and are triggered when we know that a node is lagging behind us,
     ///   (as recorded by the ConvergenceMonitor)
-    pub(crate) fn select_gossip_destinations<
-        ExchangeHeartbeatsF,
-        ExchangeClusterViewsF,
-        Out,
-        ExchangeHeartbeatsOutFut,
-        ExchangeClusterViewsOutFut,
-    >(
+    pub(crate) fn select_gossip_destinations<ExchangeHeartbeatsF, ExchangeClusterViewsF>(
         &mut self,
         exchange_heartbeats: ExchangeHeartbeatsF,
         exchange_cluster_views: ExchangeClusterViewsF,
-    ) -> JoinSet<Out>
-    where
-        ExchangeClusterViewsF: Fn(Url, PartialClusterView) -> ExchangeClusterViewsOutFut,
-        ExchangeHeartbeatsF: Fn(Url, HashMap<NodeId, u64>) -> ExchangeHeartbeatsOutFut,
-        ExchangeClusterViewsOutFut: Future<Output = Out> + Send + 'static,
-        ExchangeHeartbeatsOutFut: Future<Output = Out> + Send + 'static,
-        Out: Send + Sync + 'static,
+    ) where
+        ExchangeClusterViewsF: Fn(Url, PartialClusterView),
+        ExchangeHeartbeatsF: Fn(Url, HashMap<NodeId, u64>),
     {
-        let mut join_set = JoinSet::new();
         let mut cluster_view_exchanges = 0;
         let mut heartbeats_destinations = Vec::new();
 
-        self.unknwon_peer_nodes.retain(|url| {
-            let view = PartialClusterView {
-                this_node_id: self.this_node_id,
-                members: self.cluster_view.known_members.clone(),
-            };
-            cluster_view_exchanges += 1;
-            exchange_cluster_views(url.clone(), view);
-            false
-        });
+        for url in &self.unknwon_peer_nodes {
+            if cluster_view_exchanges >= GOSSIP_DESTINATIONS_SAMPLE_SIZE {
+                break;
+            }
+
+            {
+                log::debug!(
+                    "[Node Id: {}] Exchanging cluster views with unknown peer node {}",
+                    self.this_node_id,
+                    url
+                );
+                let view = PartialClusterView {
+                    this_node_id: self.this_node_id,
+                    members: self.cluster_view.known_members.clone(),
+                };
+                cluster_view_exchanges += 1;
+                exchange_cluster_views(url.clone(), view);
+            }
+        }
 
         for (_, n) in &self.cluster_view.known_members {
             if cluster_view_exchanges >= GOSSIP_DESTINATIONS_SAMPLE_SIZE {
                 break;
             }
+            if n.id == self.this_node_id {
+                continue;
+            }
 
             if let Some(partial_cluster_view_to_exchange) =
                 self.collect_partial_cluster_view_of_newer_nodes(n.id)
             {
+                log::debug!(
+                    "[Node id: {}] Exchanging partial cluster view with known member {}",
+                    self.this_node_id,
+                    n.id
+                );
                 cluster_view_exchanges += 1;
-                join_set.spawn(exchange_cluster_views(
-                    n.advertised_addr.clone(),
-                    partial_cluster_view_to_exchange,
-                ));
-                continue;
+                exchange_cluster_views(n.advertised_addr.clone(), partial_cluster_view_to_exchange);
+            } else {
+                heartbeats_destinations.push(n.advertised_addr.clone());
             }
-
-            heartbeats_destinations.push(n.advertised_addr.clone());
         }
 
         let heartbeats_exchanges = GOSSIP_DESTINATIONS_SAMPLE_SIZE - cluster_view_exchanges;
+        if heartbeats_destinations.len() > 0 && heartbeats_exchanges > 0 {
+            log::debug!(
+                "[Node Id: {}] Exchanging heartbeats with {} random members",
+                self.this_node_id,
+                heartbeats_exchanges
+            );
 
-        for dest in heartbeats_destinations
-            .choose_multiple(&mut rand::thread_rng(), heartbeats_exchanges as usize)
-        {
-            join_set.spawn(exchange_heartbeats(
-                dest.clone(),
-                self.cluster_view.heartbeats.clone(),
-            ));
+            for dest in heartbeats_destinations
+                .choose_multiple(&mut rand::thread_rng(), heartbeats_exchanges as usize)
+            {
+                exchange_heartbeats(dest.clone(), self.cluster_view.heartbeats.clone());
+            }
         }
-
-        join_set
     }
 
     /// Given a node id, this returns a partial cluster view containing only the nodes

@@ -14,7 +14,7 @@ use crate::node::NodeId;
 /// instead of a full cluster view. When we know that nodes are lagging behind the running node, we can gossip only about specific nodes whose states
 /// have been updated, instead of gossipping our entire cluster view.
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ConvergenceMonitor {
     this_node_id: NodeId,
     observed_states_per_node: HashMap<NodeId, VersionVector>,

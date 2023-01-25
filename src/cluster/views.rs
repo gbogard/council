@@ -7,9 +7,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use super::version_vector::VersionVector;
-use crate::{
-    node::{NodeId, NodeStatus},
-};
+use crate::node::{NodeId, NodeStatus};
 
 /// A view of how the running node views the cluster, that is how it views itself and its peers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,32 +44,30 @@ impl ClusterView {
 
     /// Merges a received view from another node into this view.
     /// This function makes [ClusterView] a Convergent Replicated Data Type (CvRDT)
-    pub(crate) fn merge_partial_cluster_view(&mut self, other_view: PartialClusterView) {
-        for (_, other_node) in other_view.members {
-            if let Some(existing_member_view) = self.known_members.get_mut(&other_node.id) {
-                existing_member_view.merge(other_node);
-                self.version_vector.versions.insert(
-                    existing_member_view.id,
-                    existing_member_view.state.as_ref().map_or(0, |s| s.version),
-                );
-                self.heartbeats.insert(
-                    existing_member_view.id,
-                    existing_member_view
-                        .state
-                        .as_ref()
-                        .map_or(0, |s| s.heartbeat),
-                );
-            } else {
-                self.version_vector.versions.insert(
-                    other_node.id,
-                    other_node.state.as_ref().map_or(0, |s| s.version),
-                );
-                self.heartbeats.insert(
-                    other_node.id,
-                    other_node.state.as_ref().map_or(0, |s| s.heartbeat),
-                );
-                self.known_members.insert(other_node.id, other_node);
-            }
+    pub(crate) fn merge_member_view(&mut self, other_node: MemberView) {
+        if let Some(existing_member_view) = self.known_members.get_mut(&other_node.id) {
+            existing_member_view.merge(other_node);
+            self.version_vector.versions.insert(
+                existing_member_view.id,
+                existing_member_view.state.as_ref().map_or(0, |s| s.version),
+            );
+            self.heartbeats.insert(
+                existing_member_view.id,
+                existing_member_view
+                    .state
+                    .as_ref()
+                    .map_or(0, |s| s.heartbeat),
+            );
+        } else {
+            self.version_vector.versions.insert(
+                other_node.id,
+                other_node.state.as_ref().map_or(0, |s| s.version),
+            );
+            self.heartbeats.insert(
+                other_node.id,
+                other_node.state.as_ref().map_or(0, |s| s.heartbeat),
+            );
+            self.known_members.insert(other_node.id, other_node);
         }
     }
 
@@ -83,7 +79,7 @@ impl ClusterView {
             .get_mut(&node_id)
             .and_then(|s| s.state.as_mut())
         {
-            state.heartbeat = std::cmp::max(heartbeat, state.heartbeat);
+            state.heartbeat = *existing_heartbeat
         }
     }
 }
@@ -193,18 +189,18 @@ mod tests {
     #[quickcheck]
     fn cluster_view_merge_is_commutative(
         mut cluster_view: ClusterView,
-        a: PartialClusterView,
-        b: PartialClusterView,
+        a: MemberView,
+        b: MemberView,
     ) -> bool {
         let merged_a_b = {
             let mut cluster_view = cluster_view.clone();
-            cluster_view.merge_partial_cluster_view(a.clone());
-            cluster_view.merge_partial_cluster_view(b.clone());
+            cluster_view.merge_member_view(a.clone());
+            cluster_view.merge_member_view(b.clone());
             cluster_view
         };
         let merged_b_a = {
-            cluster_view.merge_partial_cluster_view(a);
-            cluster_view.merge_partial_cluster_view(b);
+            cluster_view.merge_member_view(a);
+            cluster_view.merge_member_view(b);
             cluster_view
         };
         merged_a_b == merged_b_a
@@ -213,14 +209,14 @@ mod tests {
     /// Tests that for all states a and b, once we have merged b into a, merging b again into the resulting state is a no-op,
     /// i.e. that merging is idempotent.
     #[quickcheck]
-    fn cluster_view_merge_is_idempotent(mut a: ClusterView, b: PartialClusterView) -> bool {
+    fn cluster_view_merge_is_idempotent(mut a: ClusterView, b: MemberView) -> bool {
         let merged_a_b = {
-            a.merge_partial_cluster_view(b.clone());
+            a.merge_member_view(b.clone());
             a
         };
         let merged_a_b_b = {
             let mut merged_a_b = merged_a_b.clone();
-            merged_a_b.merge_partial_cluster_view(b);
+            merged_a_b.merge_member_view(b);
             merged_a_b
         };
         merged_a_b == merged_a_b_b
