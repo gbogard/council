@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[cfg(test)]
 use quickcheck::Arbitrary;
@@ -44,42 +44,42 @@ impl ClusterView {
 
     /// Merges a received view from another node into this view.
     /// This function makes [ClusterView] a Convergent Replicated Data Type (CvRDT)
-    pub(crate) fn merge_member_view(&mut self, other_node: MemberView) {
-        if let Some(existing_member_view) = self.known_members.get_mut(&other_node.id) {
-            existing_member_view.merge(other_node);
-            self.version_vector.versions.insert(
-                existing_member_view.id,
-                existing_member_view.state.as_ref().map_or(0, |s| s.version),
-            );
-            self.heartbeats.insert(
-                existing_member_view.id,
-                existing_member_view
-                    .state
-                    .as_ref()
-                    .map_or(0, |s| s.heartbeat),
-            );
-        } else {
-            self.version_vector.versions.insert(
-                other_node.id,
-                other_node.state.as_ref().map_or(0, |s| s.version),
-            );
-            self.heartbeats.insert(
-                other_node.id,
-                other_node.state.as_ref().map_or(0, |s| s.heartbeat),
-            );
-            self.known_members.insert(other_node.id, other_node);
+    pub(crate) fn merge_member_view(&mut self, this_node_id: NodeId, other_node: MemberView) {
+        let merged_member_view = self
+            .known_members
+            .entry(other_node.id)
+            .and_modify(|m| m.merge(other_node.clone()))
+            .or_insert(other_node);
+
+        if let Some(state) = &mut merged_member_view.state {
+            state.observed_by.insert(this_node_id);
+            self.heartbeats
+                .insert(merged_member_view.id, state.heartbeat);
+            self.version_vector
+                .record_version(merged_member_view.id, state.version);
         }
     }
 
-    pub(crate) fn record_heartbeat(&mut self, node_id: NodeId, heartbeat: u64) {
-        let existing_heartbeat = self.heartbeats.entry(node_id).or_default();
-        *existing_heartbeat = std::cmp::max(heartbeat, *existing_heartbeat);
-        if let Some(state) = self
-            .known_members
-            .get_mut(&node_id)
-            .and_then(|s| s.state.as_mut())
-        {
-            state.heartbeat = *existing_heartbeat
+    #[cfg(test)]
+    pub(crate) fn from_members(members: impl IntoIterator<Item = MemberView>) -> Self {
+        let mut version_vector = VersionVector::default();
+        let mut heartbeats = HashMap::new();
+        // Generate members so that the ids field always matches the map key
+        let members = members
+            .into_iter()
+            .map(|n| {
+                version_vector
+                    .versions
+                    .insert(n.id, n.state.as_ref().map_or(0, |s| s.version));
+                heartbeats.insert(n.id, n.state.as_ref().map_or(0, |s| s.heartbeat));
+                (n.id, n)
+            })
+            .collect();
+
+        Self {
+            known_members: members,
+            version_vector,
+            heartbeats,
         }
     }
 }
@@ -108,6 +108,11 @@ impl MemberView {
                 node_status: NodeStatus::Joining,
                 heartbeat: 0,
                 version: 1,
+                observed_by: {
+                    let mut set = HashSet::new();
+                    set.insert(id);
+                    set
+                },
             }),
         }
     }
@@ -124,7 +129,8 @@ impl MemberView {
             match (&mut self.state, incoming.state) {
                 // Whenever the incoming view carries data and ours doesn't, discard our view
                 (None, Some(s)) => self.state = Some(s),
-                // If the incoming version is stricly superior to our local view's version, accept the incoming node status and version
+
+                // If the incoming version is strictly superior to our local view's version, accept the incoming node status and version
                 (Some(self_state), Some(incoming_state))
                     if incoming_state.version > self_state.version =>
                 {
@@ -132,7 +138,9 @@ impl MemberView {
                     self_state.version = incoming_state.version;
                     self_state.heartbeat =
                         std::cmp::max(self_state.heartbeat, incoming_state.heartbeat);
+                    self_state.observed_by = incoming_state.observed_by;
                 }
+
                 // If our local view's version is strictly superior to the incoming view's version, keep our local node status and version
                 (Some(self_state), Some(incoming_state))
                     if incoming_state.version < self_state.version =>
@@ -140,6 +148,7 @@ impl MemberView {
                     self_state.heartbeat =
                         std::cmp::max(self_state.heartbeat, incoming_state.heartbeat);
                 }
+
                 // If our both view have the same version number but conflicting statuses, resolve the conflict
                 // by applying status priority rules
                 (Some(self_state), Some(incoming_state))
@@ -150,6 +159,13 @@ impl MemberView {
                         std::cmp::max(self_state.heartbeat, incoming_state.heartbeat);
                     self_state.node_status =
                         std::cmp::max(self_state.node_status, incoming_state.node_status)
+                }
+
+                // If our both view have the same version number and no conflict, just merge the observer sets
+                (Some(self_state), Some(incoming_state)) => {
+                    self_state.heartbeat =
+                        std::cmp::max(self_state.heartbeat, incoming_state.heartbeat);
+                    self_state.observed_by.extend(incoming_state.observed_by)
                 }
                 _ => (),
             }
@@ -176,6 +192,7 @@ pub struct MemberViewState {
     /// Nodes will regularly increment their own counter and gossip the latest value to their peers.
     /// Nodes are not allowed to update other nodes' heartbeats counter.
     pub heartbeat: u64,
+    pub observed_by: HashSet<NodeId>,
 }
 
 #[cfg(test)]
@@ -189,18 +206,19 @@ mod tests {
     #[quickcheck]
     fn cluster_view_merge_is_commutative(
         mut cluster_view: ClusterView,
+        this_node_id: NodeId,
         a: MemberView,
         b: MemberView,
     ) -> bool {
         let merged_a_b = {
             let mut cluster_view = cluster_view.clone();
-            cluster_view.merge_member_view(a.clone());
-            cluster_view.merge_member_view(b.clone());
+            cluster_view.merge_member_view(this_node_id, a.clone());
+            cluster_view.merge_member_view(this_node_id, b.clone());
             cluster_view
         };
         let merged_b_a = {
-            cluster_view.merge_member_view(a);
-            cluster_view.merge_member_view(b);
+            cluster_view.merge_member_view(this_node_id, a);
+            cluster_view.merge_member_view(this_node_id, b);
             cluster_view
         };
         merged_a_b == merged_b_a
@@ -209,14 +227,18 @@ mod tests {
     /// Tests that for all states a and b, once we have merged b into a, merging b again into the resulting state is a no-op,
     /// i.e. that merging is idempotent.
     #[quickcheck]
-    fn cluster_view_merge_is_idempotent(mut a: ClusterView, b: MemberView) -> bool {
+    fn cluster_view_merge_is_idempotent(
+        this_node_id: NodeId,
+        mut a: ClusterView,
+        b: MemberView,
+    ) -> bool {
         let merged_a_b = {
-            a.merge_member_view(b.clone());
+            a.merge_member_view(this_node_id, b.clone());
             a
         };
         let merged_a_b_b = {
             let mut merged_a_b = merged_a_b.clone();
-            merged_a_b.merge_member_view(b);
+            merged_a_b.merge_member_view(this_node_id, b);
             merged_a_b
         };
         merged_a_b == merged_a_b_b
@@ -285,25 +307,7 @@ mod tests {
 
     impl Arbitrary for ClusterView {
         fn arbitrary(g: &mut quickcheck::Gen) -> Self {
-            let mut version_vector = VersionVector::default();
-            let mut heartbeats = HashMap::new();
-            // Generate members so that the ids field always matches the map key
-            let members = Vec::<MemberView>::arbitrary(g)
-                .into_iter()
-                .map(|n| {
-                    version_vector
-                        .versions
-                        .insert(n.id, n.state.as_ref().map_or(0, |s| s.version));
-                    heartbeats.insert(n.id, n.state.as_ref().map_or(0, |s| s.heartbeat));
-                    (n.id, n)
-                })
-                .collect();
-
-            Self {
-                known_members: members,
-                version_vector,
-                heartbeats,
-            }
+            Self::from_members(Vec::<MemberView>::arbitrary(g))
         }
     }
 
@@ -338,6 +342,7 @@ mod tests {
                 node_status: NodeStatus::arbitrary(g),
                 version: u16::arbitrary(g),
                 heartbeat: u64::arbitrary(g),
+                observed_by: HashSet::<NodeId>::arbitrary(g),
             }
         }
     }

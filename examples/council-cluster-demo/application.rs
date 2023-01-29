@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use council::{
     grpc::{DefaultTonicChannelFactory, TonicChannelFactory},
@@ -6,7 +6,10 @@ use council::{
     ClusterEvent, Council,
 };
 use rand::seq::SliceRandom;
-use tokio::sync::{oneshot, Mutex};
+use tokio::{
+    sync::{oneshot, Mutex},
+    time::sleep,
+};
 use tokio_stream::StreamExt;
 use tonic::transport::Server;
 use url::Url;
@@ -88,18 +91,12 @@ impl Application {
 
         let tonic_channel_factory = Arc::new(DefaultTonicChannelFactory::new());
 
-        let instances: HashMap<NodeId, RunningCouncil> = urls
-            .iter()
-            .map(|url| {
-                let instance = RunningCouncil::new(
-                    url,
-                    peer_nodes.clone(),
-                    Arc::clone(&tonic_channel_factory),
-                );
-
-                (instance.council_instance.this_node_id, instance)
-            })
-            .collect();
+        let mut instances = HashMap::with_capacity(urls.len());
+        for url in urls {
+            let instance =
+                RunningCouncil::new(&url, peer_nodes.clone(), Arc::clone(&tonic_channel_factory));
+            instances.insert(instance.council_instance.this_node_id, instance);
+        }
 
         Self { instances }
     }

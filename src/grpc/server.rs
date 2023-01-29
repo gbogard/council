@@ -53,29 +53,12 @@ impl protos::gossip_service_server::GossipService for CouncilGrpcServer {
             })
             .await
             .map_err(|e| Status::unavailable(e.to_string()))?;
-        let reply = reply_rx
-            .await
-            .map_err(|e| Status::from_error(Box::new(e)))?
-            .into();
-        Ok(Response::new(reply))
-    }
 
-    async fn exchange_heartbeats(
-        &self,
-        request: tonic::Request<protos::HeartbeatMessage>,
-    ) -> Result<tonic::Response<protos::HeartbeatMessage>, tonic::Status> {
-        let (reply_tx, reply_rx) = oneshot::channel();
-        self.main_thread_message_sender
-            .send(Message::ReconcileHeartbeats {
-                incoming_heartbeats: request.into_inner().into(),
-                reconciled_heartbeats_reply: Some(reply_tx),
-            })
-            .await
-            .map_err(|e| Status::unavailable(e.to_string()))?;
         let reply = reply_rx
             .await
             .map_err(|e| Status::from_error(Box::new(e)))?
             .into();
+
         Ok(Response::new(reply))
     }
 }

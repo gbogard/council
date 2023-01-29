@@ -1,9 +1,11 @@
-use std::collections::HashMap;
+use std::time::Instant;
 
-use council::{node::NodeId, ClusterEvent};
+use council::{cluster::views::MemberView, node::NodeId};
 use maud::*;
 
 use crate::application::{Application, RunningCouncil};
+
+const UNKNOWN: &'static str = "Ø";
 
 fn html_page_structure(content: Markup) -> Markup {
     html! {
@@ -23,7 +25,7 @@ fn html_page_structure(content: Markup) -> Markup {
 fn navigation(node_ids: &[NodeId], instance: &RunningCouncil) -> Markup {
     html! {
         nav {
-            div class="nav-content" {
+            div .nav-content {
                 label { "Select a node: " }
                 select onchange="location = `/?node_id=${this.value}`;" {
                     @for node_id in node_ids {
@@ -38,15 +40,25 @@ fn navigation(node_ids: &[NodeId], instance: &RunningCouncil) -> Markup {
 
 async fn render_node(node_ids: &[NodeId], instance: &RunningCouncil) -> Markup {
     let cluster = instance.council_instance.cluster().await.unwrap();
+    let mut members = cluster
+        .cluster_view
+        .known_members
+        .values()
+        .collect::<Vec<&MemberView>>();
+    members.sort_by_key(|m| m.id);
+
+    let now = Instant::now();
     html! {
         (navigation(node_ids, instance))
         main {
             h2 { "This node"}
             strong { "ID : " } (cluster.this_node_id.to_string())
+            br;
+            strong { "Has converged? : " } (cluster.has_converged().to_string())
             h2 { "Know members"}
-            div class="card-grid" {
-                @for member_view in cluster.cluster_view.known_members.values() {
-                    div class="card" {
+            div .card-grid {
+                @for member_view in members {
+                    div .card ."this-node"[member_view.id == cluster.this_node_id]  {
                         header {
                             a href={"/?node_id=" (member_view.id.to_string()) } {
                                 (member_view.id.unique_id)
@@ -61,12 +73,16 @@ async fn render_node(node_ids: &[NodeId], instance: &RunningCouncil) -> Markup {
                                 li { strong { "Version: " } (state.version) }
                                 li { strong { "Status: " } (state.node_status.to_string()) }
                                 li { strong { "Heartbeat: " } (state.heartbeat) }
+                                li {
+                                    strong { "Observed by: " }
+                                    ul { @for id in &state.observed_by { li { (id.unique_id) } } }
+                                }
                             }
                         }
                     }
                 }
             }
-            div class="flex two" {
+            div .flex two {
                 div {
                     h2 { "Peer Nodes"}
                     ul {
@@ -84,12 +100,37 @@ async fn render_node(node_ids: &[NodeId], instance: &RunningCouncil) -> Markup {
                     }
                 }
             }
-            h2 { "Raw cluster state" }
-            div class="card" id="raw-cluster-state" {
+            h2 { "Failure detector" }
+            table {
+                thead {
+                    tr {
+                        th { "Node" }
+                        th { "Heartbeat" }
+                        th { "Mean heartbeat time" }
+                        th { "Std. dev." }
+                        th { "Min" }
+                        th { "Max" }
+                        th { "Phi" }
+                    }
+                }
+                tbody {
+                    @for (id, m) in cluster.failure_detector.members() {
+                        tr {
+                            td { (id.unique_id.to_string()) }
+                            td { (m.last_heartbeat) }
+                            td { (m.heartbeats_intervals_mean.map_or(UNKNOWN.to_string(), |d| format!("{}ms", d.as_millis()))) }
+                            td { (m.hearbeats_interval_std_dev.map_or(UNKNOWN.to_string(), |d| format!("{}ms", d.as_millis()))) }
+                            td { (m.heartbeats_min_interval.map_or(UNKNOWN.to_string(), |d| format!("{}ms", d.as_millis()))) }
+                            td { (m.heartbeats_max_interval.map_or(UNKNOWN.to_string(), |d| format!("{}ms", d.as_millis()))) }
+                            td { (m.phi(now).map_or(UNKNOWN.to_string(), |p| p.to_string())) }
+                        }
+                    }
+                }
+            }
+            h2 { "Raw cluster state (JSON)" }
+            div .card id="raw-cluster-state" {
                 pre { (serde_json::ser::to_string_pretty(&cluster).unwrap()) }
             }
-
-
         }
     }
 }

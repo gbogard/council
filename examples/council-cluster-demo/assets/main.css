@@ -3,7 +3,7 @@ nav {
 }
 
 body {
-    background-color: #f2f2f2;
+    background-color: #f6f6f6;
 }
 
 main {
@@ -33,6 +33,10 @@ main {
     gap: .5rem;
 }
 
+.this-node {
+    box-shadow: 0px 0px 15px 3px rgba(0,116,217,0.75);
+}
+
 #raw-cluster-state {
     max-height: 350px;
     overflow-y: auto;
@@ -42,4 +46,15 @@ main {
 #raw-cluster-state pre {
     background-color: white;
     font-size: 12px;
+}
+
+.vertical-text {
+    writing-mode: vertical-rl;
+    text-orientation: sideways-right;
+}
+
+table.subtle th {
+    background-color: #EAEAEA;
+    color: black;
+    font-weight: normal;
 }

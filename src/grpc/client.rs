@@ -24,17 +24,6 @@ impl CouncilClient {
         Ok(response.into_inner().into())
     }
 
-    pub(crate) async fn exchange_heartbeats(
-        &self,
-        node_advertised_url: Url,
-        heartbeat_messsage: HeartbeatMessage,
-    ) -> Result<HeartbeatMessage, Box<dyn Error + Send + Sync + 'static>> {
-        let mut client = self.get_client_for_url(node_advertised_url).await?;
-        let request = Request::new(heartbeat_messsage.into());
-        let response = client.exchange_heartbeats(request).await?;
-        Ok(response.into_inner().into())
-    }
-
     async fn get_client_for_url(
         &self,
         url: Url,

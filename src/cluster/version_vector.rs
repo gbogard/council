@@ -13,13 +13,16 @@ use crate::node::NodeId;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)]
 pub struct VersionVector {
-    pub(crate) versions: HashMap<NodeId, u16>,
+    pub versions: HashMap<NodeId, u16>,
 }
 
 impl VersionVector {
     pub(crate) fn record_version(&mut self, node_id: NodeId, version: u16) {
-        let existing_version = self.versions.entry(node_id).or_insert(version);
-        *existing_version = std::cmp::max(*existing_version, version);
+        if let Some(existing_version) = self.versions.get_mut(&node_id) {
+            *existing_version = std::cmp::max(*existing_version, version);
+        } else {
+            self.versions.insert(node_id, version);
+        }
     }
 }
 
@@ -42,7 +45,7 @@ impl<'lhs, 'rhs> VersionVectorOffset<'lhs, 'rhs> {
     pub(crate) fn of(lhs: &'lhs VersionVector, rhs: &'rhs VersionVector) -> Self {
         let mut behind_lhs = HashSet::new();
         for (node_id, lhs_version) in &lhs.versions {
-            match lhs.versions.get(node_id) {
+            match rhs.versions.get(node_id) {
                 Some(rhs_version) if rhs_version < lhs_version => {
                     behind_lhs.insert(*node_id);
                 }
@@ -66,5 +69,69 @@ impl Arbitrary for VersionVector {
         VersionVector {
             versions: HashMap::<NodeId, u16>::arbitrary(g),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::SystemTime;
+
+    use url::Url;
+
+    use crate::{
+        cluster::version_vector::{VersionVector, VersionVectorOffset},
+        node::NodeId,
+    };
+
+    #[quickcheck]
+    pub fn test_version_vector_record_version(mut version_vector: VersionVector) {
+        let node_id = NodeId::from_url(&Url::parse("http://test.com").unwrap(), SystemTime::now());
+        assert_eq!(version_vector.versions.get(&node_id), None);
+        version_vector.record_version(node_id, 1);
+        assert_eq!(version_vector.versions.get(&node_id), Some(&1));
+        version_vector.record_version(node_id, 2);
+        assert_eq!(version_vector.versions.get(&node_id), Some(&2));
+        version_vector.record_version(node_id, 1);
+        assert_eq!(version_vector.versions.get(&node_id), Some(&2));
+    }
+
+    #[quickcheck]
+    pub fn test_version_vector_offset_identical(version_vector: VersionVector) {
+        assert!(VersionVectorOffset::of(&version_vector, &version_vector)
+            .behind_lhs
+            .is_empty());
+    }
+
+    #[test]
+    pub fn test_version_vector_offset() {
+        let now = SystemTime::now();
+        let node_id_a = NodeId::from_url(&Url::parse("http://a.com").unwrap(), now);
+        let node_id_b = NodeId::from_url(&Url::parse("http://b.com").unwrap(), now);
+        let node_id_c = NodeId::from_url(&Url::parse("http://c.com").unwrap(), now);
+        let node_id_d = NodeId::from_url(&Url::parse("http://d.com").unwrap(), now);
+
+        let a = VersionVector {
+            versions: vec![(node_id_a, 1), (node_id_b, 3), (node_id_c, 3)]
+                .into_iter()
+                .collect(),
+        };
+        let b = VersionVector {
+            versions: vec![
+                (node_id_a, 1),
+                (node_id_b, 2),
+                (node_id_c, 4),
+                (node_id_d, 1),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let offset = VersionVectorOffset::of(&a, &b);
+        assert_eq!(offset.behind_lhs, vec![node_id_b].into_iter().collect());
+
+        let offset = VersionVectorOffset::of(&b, &a);
+        assert_eq!(
+            offset.behind_lhs,
+            vec![node_id_c, node_id_d].into_iter().collect()
+        );
     }
 }

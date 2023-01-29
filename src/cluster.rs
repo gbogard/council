@@ -1,14 +1,10 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Instant};
 
 use url::Url;
 
-pub use self::gossip_destinations::*;
-use self::{
-    convergence_monitor::ConvergenceMonitor, failure_detector::FailureDetector, views::ClusterView,
-};
+use self::{failure_detector::FailureDetector, views::ClusterView};
 use crate::node::NodeId;
 
-pub mod convergence_monitor;
 pub mod failure_detector;
 pub mod version_vector;
 pub mod views;
@@ -25,10 +21,28 @@ pub struct Cluster {
     pub peer_nodes: HashSet<Url>,
     pub unknwon_peer_nodes: HashSet<Url>,
     pub failure_detector: FailureDetector,
-    pub convergence_monitor: ConvergenceMonitor,
 }
 
 impl Cluster {
+    pub fn has_converged(&self) -> bool {
+        let now = Instant::now();
+        let all_members_ids: HashSet<NodeId> =
+            self.cluster_view.known_members.keys().cloned().collect();
+
+        let all_members_are_live_and_converged =
+            self.cluster_view.known_members.iter().all(|(_, member)| {
+                let member_is_live =
+                    member.id == self.this_node_id || self.failure_detector.is_live(member.id, now);
+                let member_observed_all_states = member
+                    .state
+                    .as_ref()
+                    .map_or(false, |state| state.observed_by == all_members_ids);
+                member_is_live && member_observed_all_states
+            });
+
+        self.unknwon_peer_nodes.is_empty() && all_members_are_live_and_converged
+    }
+
     /// Increments the heartbeat of the running node by one and returns the new value
     pub(crate) fn increment_own_heartbeat(&mut self) -> u64 {
         if let Some(heartbeat) = self.cluster_view.heartbeats.get_mut(&self.this_node_id) {
@@ -47,3 +61,6 @@ impl Cluster {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

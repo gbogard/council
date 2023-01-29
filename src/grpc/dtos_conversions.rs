@@ -1,6 +1,6 @@
 use url::Url;
 
-use super::{client::HeartbeatMessage, protos};
+use super::protos;
 use crate::{
     cluster::views::{MemberView, MemberViewState, PartialClusterView},
     node::{NodeId, NodeStatus},
@@ -61,6 +61,7 @@ impl From<protos::MemberViewState> for MemberViewState {
             node_status: NodeStatus::try_from(value.node_status as u8).unwrap(),
             version: value.version as u16,
             heartbeat: value.heartbeat,
+            observed_by: value.observed_by.into_iter().map(|n| n.into()).collect(),
         }
     }
 }
@@ -71,30 +72,7 @@ impl From<MemberViewState> for protos::MemberViewState {
             node_status: value.node_status as u32,
             version: value.version as u32,
             heartbeat: value.heartbeat,
-        }
-    }
-}
-
-impl From<protos::HeartbeatMessage> for HeartbeatMessage {
-    fn from(value: protos::HeartbeatMessage) -> Self {
-        value
-            .members
-            .into_iter()
-            .map(|m| (m.node_id.unwrap().into(), m.heartbeat))
-            .collect()
-    }
-}
-
-impl From<HeartbeatMessage> for protos::HeartbeatMessage {
-    fn from(value: HeartbeatMessage) -> Self {
-        Self {
-            members: value
-                .into_iter()
-                .map(|(id, heartbeat)| protos::HeartbeatMessageEntry {
-                    node_id: Some(id.into()),
-                    heartbeat,
-                })
-                .collect(),
+            observed_by: value.observed_by.into_iter().map(|n| n.into()).collect(),
         }
     }
 }

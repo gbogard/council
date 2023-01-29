@@ -28,7 +28,7 @@ pub async fn main() {
     let app = Arc::new(Application::start(number_of_nodes_to_start).await);
     let server = tokio::spawn(http_server::start_http_server(Arc::clone(&app)));
 
-    log::info!("Demo is available on http://localhost:8080 !");
+    log::info!("Demo is available on http://localhost:8080!");
 
     tokio::select! {
         signal = tokio::signal::ctrl_c() => {

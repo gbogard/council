@@ -8,10 +8,7 @@ use tokio::sync::{broadcast, mpsc};
 use url::Url;
 
 use crate::{
-    cluster::{
-        convergence_monitor::ConvergenceMonitor, failure_detector::FailureDetector,
-        views::ClusterView, Cluster,
-    },
+    cluster::{failure_detector::FailureDetector, views::ClusterView, Cluster},
     grpc::{client::CouncilClient, DefaultTonicChannelFactory, TonicChannelFactory},
     node::NodeId,
     Council,
@@ -34,7 +31,7 @@ impl CouncilBuilder {
             this_node_id,
             peer_nodes: HashSet::new(),
             failure_detector_phi_threshold: 8.0,
-            gossip_interval: Duration::from_secs(1),
+            gossip_interval: Duration::from_millis(1500),
             tonic_channel_factory: Arc::new(DefaultTonicChannelFactory::new()),
         }
     }
@@ -66,7 +63,7 @@ impl CouncilBuilder {
     }
     pub fn build(self) -> Council {
         let (cluster_events_sender, _) = broadcast::channel(10);
-        let (message_sender, message_receiver) = mpsc::channel(10);
+        let (message_sender, message_receiver) = mpsc::channel(20);
 
         let outgoing_gossip_interval = tokio::time::interval(self.gossip_interval);
 
@@ -79,7 +76,6 @@ impl CouncilBuilder {
         let cluster_view =
             ClusterView::initial(self.this_node_id, self.this_node_advertised_url.clone());
         let failure_detector = FailureDetector::new(self.this_node_id);
-        let convergence_monitor = ConvergenceMonitor::new(self.this_node_id);
 
         let cluster = Cluster {
             this_node_id: self.this_node_id,
@@ -88,7 +84,6 @@ impl CouncilBuilder {
             unknwon_peer_nodes: peer_nodes.clone(),
             peer_nodes,
             failure_detector,
-            convergence_monitor,
         };
         log::info!(
             "Creating Council instance with id {} and {} peer nodes",
@@ -114,7 +109,7 @@ impl CouncilBuilder {
             cluster_events_sender,
             tonic_channel_factory: self.tonic_channel_factory,
             main_thread_message_sender: message_sender,
-            main_thread,
+            _main_thread: main_thread,
         }
     }
 }

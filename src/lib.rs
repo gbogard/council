@@ -42,7 +42,7 @@ pub struct Council {
     cluster_events_sender: broadcast::Sender<ClusterEvent>,
     tonic_channel_factory: Arc<dyn TonicChannelFactory + Send + Sync>,
     main_thread_message_sender: mpsc::Sender<Message>,
-    main_thread: JoinHandle<()>,
+    _main_thread: JoinHandle<()>,
 }
 
 impl Council {
@@ -86,6 +86,7 @@ impl Council {
         mut cluster_events_sender: broadcast::Sender<ClusterEvent>,
         client: Arc<CouncilClient>,
     ) {
+        outgoing_gossip_interval.tick().await;
         loop {
             select! {
                 Some(incoming_message) = message_receiver.recv() => {
@@ -94,8 +95,6 @@ impl Council {
                         {
                             handle_incoming_cluster_view(&mut cluster, incoming_cluster_view, reconciled_cluster_view_reply, &mut cluster_events_sender).await;
                         },
-                        Message::ReconcileHeartbeats { incoming_heartbeats, reconciled_heartbeats_reply } =>
-                            handle_incoming_heartbeat_message(&mut cluster, incoming_heartbeats, reconciled_heartbeats_reply).await,
                         Message::GetCurrentClusterClone { reply} => {
                             let _ = reply.send(cluster.clone());
                         }
@@ -125,35 +124,21 @@ async fn gossip(
     client: &Arc<CouncilClient>,
     message_sender: &mut mpsc::Sender<Message>,
 ) {
-    cluster.select_gossip_destinations(
-        |url, heartbeat_message| {
-            let client = Arc::clone(&client);
-            let message_sender = message_sender.clone();
-            tokio::spawn(async move {
-                if let Ok(res) = client.exchange_heartbeats(url, heartbeat_message).await {
-                    let _ = message_sender.send(Message::ReconcileHeartbeats {
-                        incoming_heartbeats: res,
-                        reconciled_heartbeats_reply: None,
-                    });
-                }
-            });
-        },
-        |url, partial_cluster_view| {
-            let client = Arc::clone(&client);
-            let message_sender = message_sender.clone();
-            tokio::spawn(async move {
-                if let Ok(res) = client
-                    .exchange_cluster_views(url, partial_cluster_view)
-                    .await
-                {
-                    let _ = message_sender.send(Message::ReconcileClusterView {
-                        incoming_cluster_view: res,
-                        reconciled_cluster_view_reply: None,
-                    });
-                }
-            });
-        },
-    );
+    for dest in cluster.select_gossip_destinations() {
+        let client = Arc::clone(&client);
+        let message_sender = message_sender.clone();
+        tokio::spawn(async move {
+            if let Ok(res) = client
+                .exchange_cluster_views(dest.destination_url, dest.cluster_view)
+                .await
+            {
+                let _ = message_sender.send(Message::ReconcileClusterView {
+                    incoming_cluster_view: res,
+                    reconciled_cluster_view_reply: None,
+                });
+            }
+        });
+    }
 }
 
 async fn handle_incoming_cluster_view(
@@ -170,31 +155,29 @@ async fn handle_incoming_cluster_view(
         incoming_node_id
     );
 
-    log::debug!(
+    log::trace!(
         "[Node id: {}] Received incoming cluster view from node {} containing {} members",
         cluster.this_node_id,
         incoming_node_id,
         incoming_cluster_view.members.len()
     );
-    for (_, member) in incoming_cluster_view.members {
-        if member.id == cluster.this_node_id {
-            continue;
-        }
 
+    for (_, mut member) in incoming_cluster_view.members {
         if member.id == incoming_node_id {
             cluster.unknwon_peer_nodes.remove(&member.advertised_addr);
         }
 
-        if let Some(state) = &member.state {
-            cluster
-                .convergence_monitor
-                .record_version(incoming_node_id, member.id, state.version);
-            cluster
-                .failure_detector
-                .record_heartbeat(member.id, state.heartbeat);
+        if let Some(state) = &mut member.state {
+            if member.id != cluster.this_node_id {
+                cluster
+                    .failure_detector
+                    .record_heartbeat(member.id, state.heartbeat);
+            }
         }
 
-        cluster.cluster_view.merge_member_view(member);
+        cluster
+            .cluster_view
+            .merge_member_view(cluster.this_node_id, member);
     }
 
     // Notify outside subscribers that the cluster state has changed
@@ -206,38 +189,11 @@ async fn handle_incoming_cluster_view(
 
     // Reply to the initiator of the gossip request, if applicable
     if let Some(reply) = reply {
-        let partial_cluster_view_to_send = cluster
-            .collect_partial_cluster_view_of_newer_nodes(incoming_node_id)
-            .unwrap_or(PartialClusterView {
-                this_node_id: cluster.this_node_id,
-                members: HashMap::default(),
-            });
-
+        let partial_cluster_view_to_send = PartialClusterView {
+            this_node_id: cluster.this_node_id,
+            members: cluster.cluster_view.known_members.clone(),
+        };
         let _ = reply.send(partial_cluster_view_to_send);
-    }
-}
-
-async fn handle_incoming_heartbeat_message(
-    cluster: &mut Cluster,
-    incoming_message: HeartbeatMessage,
-    reply: Option<oneshot::Sender<HeartbeatMessage>>,
-) {
-    log::trace!(
-        "[Node id: {}] Received incoming heartbeat for {} members",
-        cluster.this_node_id,
-        incoming_message.len()
-    );
-    for (node_id, heartbeat) in incoming_message {
-        if node_id != cluster.this_node_id {
-            cluster.cluster_view.record_heartbeat(node_id, heartbeat);
-            cluster
-                .failure_detector
-                .record_heartbeat(node_id, heartbeat);
-        }
-    }
-
-    if let Some(reply) = reply {
-        let _ = reply.send(cluster.cluster_view.heartbeats.clone());
     }
 }
 
@@ -248,11 +204,6 @@ enum Message {
     ReconcileClusterView {
         incoming_cluster_view: PartialClusterView,
         reconciled_cluster_view_reply: Option<oneshot::Sender<PartialClusterView>>,
-    },
-
-    ReconcileHeartbeats {
-        incoming_heartbeats: HeartbeatMessage,
-        reconciled_heartbeats_reply: Option<oneshot::Sender<HeartbeatMessage>>,
     },
     GetCurrentClusterClone {
         reply: oneshot::Sender<Cluster>,

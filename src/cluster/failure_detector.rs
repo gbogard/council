@@ -5,7 +5,7 @@ use std::{
 
 use crate::node::NodeId;
 
-const HEARTBEAT_INTERVALS_WINDOW_SIZE: u32 = 255;
+const HEARTBEAT_INTERVALS_WINDOW_SIZE: u32 = 100;
 
 /// The [FailureDetector] estimates the probability of a node being unreachable.
 ///
@@ -21,7 +21,7 @@ const HEARTBEAT_INTERVALS_WINDOW_SIZE: u32 = 255;
 #[derive(Clone, Debug)]
 pub struct FailureDetector {
     this_node_id: NodeId,
-    members: HashMap<NodeId, FailureDetectorMember>,
+    pub(crate) members: HashMap<NodeId, FailureDetectorMember>,
     pub phi_treshold: f64,
 }
 
@@ -37,30 +37,20 @@ impl FailureDetector {
     pub(crate) fn record_heartbeat(&mut self, node_id: NodeId, last_heartbeat: u64) {
         debug_assert_ne!(node_id, self.this_node_id);
 
-        let last_heartbeat_received_at = Instant::now();
         match self.members.get_mut(&node_id) {
             Some(member) if member.last_heartbeat < last_heartbeat => {
-                let elapsed_time = member.last_heartbeat_received_at.elapsed();
-                let received_heartbeats_since_last_record: u32 =
-                    (last_heartbeat - member.last_heartbeat) as u32;
-                let mean_heartbeat_time = elapsed_time / received_heartbeats_since_last_record;
-                for _ in 0..received_heartbeats_since_last_record {
-                    member.insert_interval(mean_heartbeat_time);
-                }
-                member.refresh_stats();
+                member.record_heartbeat(last_heartbeat);
             }
             None => {
-                let member = FailureDetectorMember {
-                    last_heartbeat,
-                    last_heartbeat_received_at,
-                    heartbeats_intervals: LinkedList::new(),
-                    hearbeats_interval_std_dev: None,
-                    heartbeats_intervals_mean: None,
-                };
-                self.members.insert(node_id, member);
+                self.members
+                    .insert(node_id, FailureDetectorMember::new(last_heartbeat));
             }
             _ => (),
         }
+    }
+
+    pub fn members(&self) -> impl Iterator<Item = (NodeId, &FailureDetectorMember)> {
+        self.members.iter().map(|(id, m)| (*id, m))
     }
 
     pub fn is_live(&self, node_id: NodeId, now: Instant) -> bool {
@@ -94,16 +84,31 @@ impl FailureDetector {
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-struct FailureDetectorMember {
-    last_heartbeat: u64,
+pub struct FailureDetectorMember {
+    pub last_heartbeat: u64,
     #[cfg_attr(feature = "serde", serde(skip))]
-    last_heartbeat_received_at: Instant,
+    pub last_heartbeat_received_at: Instant,
+    #[cfg_attr(feature = "serde", serde(skip))]
     heartbeats_intervals: LinkedList<Duration>,
-    heartbeats_intervals_mean: Option<Duration>,
-    hearbeats_interval_std_dev: Option<Duration>,
+    pub heartbeats_intervals_mean: Option<Duration>,
+    pub hearbeats_interval_std_dev: Option<Duration>,
+    pub heartbeats_min_interval: Option<Duration>,
+    pub heartbeats_max_interval: Option<Duration>,
 }
 
 impl FailureDetectorMember {
+    fn new(last_heartbeat: u64) -> Self {
+        Self {
+            last_heartbeat,
+            last_heartbeat_received_at: Instant::now(),
+            heartbeats_intervals: LinkedList::new(),
+            hearbeats_interval_std_dev: None,
+            heartbeats_intervals_mean: None,
+            heartbeats_min_interval: None,
+            heartbeats_max_interval: None,
+        }
+    }
+
     fn refresh_stats(&mut self) {
         let count = self.heartbeats_intervals.len();
         if count > 0 {
@@ -129,7 +134,7 @@ impl FailureDetectorMember {
         }
     }
 
-    fn phi(&self, now: Instant) -> Option<f64> {
+    pub fn phi(&self, now: Instant) -> Option<f64> {
         match (
             self.heartbeats_intervals_mean,
             self.hearbeats_interval_std_dev,
@@ -150,6 +155,83 @@ impl FailureDetectorMember {
         if self.heartbeats_intervals.len() == HEARTBEAT_INTERVALS_WINDOW_SIZE as usize {
             self.heartbeats_intervals.pop_front();
         }
+        if self.heartbeats_min_interval.is_none() {
+            self.heartbeats_min_interval = Some(interval)
+        } else {
+            self.heartbeats_min_interval =
+                std::cmp::min(self.heartbeats_min_interval, Some(interval));
+        }
+        self.heartbeats_max_interval = std::cmp::max(self.heartbeats_max_interval, Some(interval));
         self.heartbeats_intervals.push_back(interval);
+    }
+
+    fn record_heartbeat(&mut self, last_heartbeat: u64) {
+        let new_last_heartbeat_receveived_at = Instant::now();
+        let elapsed_time = new_last_heartbeat_receveived_at - self.last_heartbeat_received_at;
+        let received_heartbeats_since_last_record: u32 =
+            (last_heartbeat - self.last_heartbeat) as u32;
+        let mean_heartbeat_time = elapsed_time / received_heartbeats_since_last_record;
+        for _ in 0..received_heartbeats_since_last_record {
+            self.insert_interval(mean_heartbeat_time);
+        }
+        self.last_heartbeat = last_heartbeat;
+        self.last_heartbeat_received_at = new_last_heartbeat_receveived_at;
+        self.refresh_stats();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::LinkedList,
+        time::{Duration, Instant},
+    };
+
+    use tokio::time::sleep;
+
+    use crate::cluster::failure_detector::FailureDetectorMember;
+
+    #[tokio::test]
+    async fn failure_detector_member_stats() {
+        let expected_mean_heartbeat_time = Duration::from_millis(5);
+        let mut member = FailureDetectorMember::new(1);
+
+        sleep(expected_mean_heartbeat_time).await;
+        member.record_heartbeat(2);
+        sleep(expected_mean_heartbeat_time * 3).await;
+        member.record_heartbeat(5);
+        sleep(expected_mean_heartbeat_time * 10).await;
+        member.record_heartbeat(15);
+        sleep(expected_mean_heartbeat_time * 5).await;
+        member.record_heartbeat(20);
+
+        if let Some(mean) = member.heartbeats_intervals_mean {
+            let min = expected_mean_heartbeat_time.mul_f64(0.9);
+            let max = expected_mean_heartbeat_time.mul_f64(1.2);
+            println!("Mean heartbeat duration is {:?}", mean);
+            assert!(
+                mean >= min,
+                "Expected mean to be >= {:?} but mean was {:?}",
+                min,
+                mean
+            );
+            assert!(
+                mean <= max,
+                "Expected mean to be <= {:?} but mean was {:?}",
+                max,
+                mean
+            );
+        } else {
+            panic!();
+        }
+
+        if let Some(std_dev) = member.hearbeats_interval_std_dev {
+            println!("Heartbeat Std dev. is {:?}", std_dev);
+            assert!(
+                std_dev <= Duration::from_millis(1),
+                "Expected std dev to be <= 1ms but got {:?}",
+                std_dev
+            );
+        }
     }
 }

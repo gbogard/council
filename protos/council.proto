@@ -16,6 +16,7 @@ message MemberViewState {
     uint32 node_status = 1;
     uint32 version = 2;
     uint64 heartbeat = 3;
+    repeated NodeId observed_by = 4;
 }
 
 message PartialClusterViewEntry {
@@ -28,16 +29,6 @@ message PartialClusterView {
     repeated PartialClusterViewEntry members = 2;
 }
 
-message HeartbeatMessageEntry {
-    NodeId node_id = 1;
-    uint64 heartbeat = 2;
-}
-
-message HeartbeatMessage {
-    repeated HeartbeatMessageEntry members = 1;
-}
-
 service GossipService {
     rpc ExchangeClusterViews (PartialClusterView) returns (PartialClusterView); 
-    rpc ExchangeHeartbeats (HeartbeatMessage) returns (HeartbeatMessage); 
 }
